@@ -1,0 +1,7 @@
+# Versions used by the integration and geometry tests for this release.
+cadquery==2.7.0
+numpy>=2.0,<3
+scipy>=1.13,<2
+pillow>=11,<13
+pydantic>=2.11,<3
+mcp==1.30.0

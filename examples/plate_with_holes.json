@@ -1,0 +1,295 @@
+{
+  "version": 2,
+  "features": [
+    {
+      "id": "plate",
+      "name": "Grundplatte",
+      "support": {
+        "plane": "XY"
+      },
+      "geometry": [
+        {
+          "id": "outline",
+          "construction": false,
+          "type": "rect",
+          "x": 0.0,
+          "y": 0.0,
+          "a": 80.0,
+          "b": 50.0,
+          "angle": 0.0
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "width",
+          "kind": "linear",
+          "value": 80.0,
+          "first": {
+            "kind": "point",
+            "element": "outline",
+            "role": "bl"
+          },
+          "second": {
+            "kind": "point",
+            "element": "outline",
+            "role": "br"
+          },
+          "axis": "x",
+          "sign": 1,
+          "flipFirst": 1,
+          "flipSecond": 1,
+          "position": [
+            0.0,
+            -31.0
+          ],
+          "layout": {
+            "mode": "auto",
+            "last_position": [
+              0.0,
+              -31.0
+            ]
+          }
+        },
+        {
+          "id": "height",
+          "kind": "linear",
+          "value": 50.0,
+          "first": {
+            "kind": "point",
+            "element": "outline",
+            "role": "bl"
+          },
+          "second": {
+            "kind": "point",
+            "element": "outline",
+            "role": "tl"
+          },
+          "axis": "y",
+          "sign": 1,
+          "flipFirst": 1,
+          "flipSecond": 1,
+          "position": [
+            -46.0,
+            0.0
+          ],
+          "layout": {
+            "mode": "auto",
+            "last_position": [
+              -46.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "relations": [
+        {
+          "id": "origin",
+          "kind": "coincident",
+          "first": {
+            "kind": "point",
+            "element": "outline",
+            "role": "center"
+          },
+          "second": {
+            "kind": "origin"
+          },
+          "orientation": 1
+        },
+        {
+          "id": "horizontal",
+          "kind": "horizontal",
+          "first": {
+            "kind": "edge",
+            "element": "outline",
+            "role": "bottom"
+          },
+          "orientation": 1
+        }
+      ],
+      "shape": "multi",
+      "op": "pad",
+      "depth": 8.0,
+      "reverse": false,
+      "symmetric": false
+    },
+    {
+      "id": "holes",
+      "name": "Vier Bohrungen",
+      "support": {
+        "face": "plate/g-outline/end"
+      },
+      "geometry": [
+        {
+          "id": "h0",
+          "construction": false,
+          "type": "circle",
+          "x": -30.0,
+          "y": -15.0,
+          "a": 6.0
+        },
+        {
+          "id": "h1",
+          "construction": false,
+          "type": "circle",
+          "x": 30.0,
+          "y": -15.0,
+          "a": 6.0
+        },
+        {
+          "id": "h2",
+          "construction": false,
+          "type": "circle",
+          "x": -30.0,
+          "y": 15.0,
+          "a": 6.0
+        },
+        {
+          "id": "h3",
+          "construction": false,
+          "type": "circle",
+          "x": 30.0,
+          "y": 15.0,
+          "a": 6.0
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "diameter",
+          "kind": "diameter",
+          "value": 6.0,
+          "element": "h0",
+          "sign": 1,
+          "flipFirst": 1,
+          "flipSecond": 1,
+          "position": [
+            -23.63603897,
+            -8.63603897
+          ],
+          "layout": {
+            "mode": "auto",
+            "last_position": [
+              -23.63603897,
+              -8.63603897
+            ]
+          }
+        },
+        {
+          "id": "edge_x",
+          "kind": "linear",
+          "value": 10.0,
+          "first": {
+            "kind": "support-edge",
+            "role": "left"
+          },
+          "second": {
+            "kind": "point",
+            "element": "h0",
+            "role": "center"
+          },
+          "axis": "x",
+          "sign": 1,
+          "flipFirst": 1,
+          "flipSecond": 1,
+          "position": [
+            -35.0,
+            -31.0
+          ],
+          "layout": {
+            "mode": "auto",
+            "last_position": [
+              -35.0,
+              -31.0
+            ]
+          }
+        },
+        {
+          "id": "edge_y",
+          "kind": "linear",
+          "value": 10.0,
+          "first": {
+            "kind": "support-edge",
+            "role": "bottom"
+          },
+          "second": {
+            "kind": "point",
+            "element": "h0",
+            "role": "center"
+          },
+          "axis": "y",
+          "sign": 1,
+          "flipFirst": 1,
+          "flipSecond": 1,
+          "position": [
+            -46.0,
+            -20.0
+          ],
+          "layout": {
+            "mode": "auto",
+            "last_position": [
+              -46.0,
+              -20.0
+            ]
+          }
+        }
+      ],
+      "relations": [
+        {
+          "id": "mirror_x",
+          "kind": "mirror",
+          "first": {
+            "kind": "geometry",
+            "element": "h0"
+          },
+          "second": {
+            "kind": "geometry",
+            "element": "h1"
+          },
+          "axis": {
+            "kind": "axis",
+            "role": "vertical"
+          },
+          "orientation": 1
+        },
+        {
+          "id": "mirror_y",
+          "kind": "mirror",
+          "first": {
+            "kind": "geometry",
+            "element": "h0"
+          },
+          "second": {
+            "kind": "geometry",
+            "element": "h2"
+          },
+          "axis": {
+            "kind": "axis",
+            "role": "horizontal"
+          },
+          "orientation": 1
+        },
+        {
+          "id": "mirror_xy",
+          "kind": "mirror",
+          "first": {
+            "kind": "geometry",
+            "element": "h1"
+          },
+          "second": {
+            "kind": "geometry",
+            "element": "h3"
+          },
+          "axis": {
+            "kind": "axis",
+            "role": "horizontal"
+          },
+          "orientation": 1
+        }
+      ],
+      "shape": "multi",
+      "op": "pocket",
+      "depth": 8.0,
+      "reverse": false,
+      "symmetric": false
+    }
+  ]
+}

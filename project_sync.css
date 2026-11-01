@@ -1,0 +1,8 @@
+#sharedProjectBar{height:36px;display:flex;align-items:center;gap:12px;padding:3px 14px;background:#122532;border-bottom:1px solid #35485d;font-size:12px;overflow-x:auto;white-space:nowrap}
+#sharedProjectBar label{display:flex;align-items:center;gap:8px;margin:0;color:#9db7c8}
+#sharedProjectBar select{max-width:230px;width:auto;padding:3px 7px;background:#1c3343;color:#e0eaf4;border:1px solid #365164;border-radius:4px;font-size:12px}
+#sharedProjectBar button{font-size:11px;padding:3px 7px}
+#sharedProjectState{color:#8ccebb;flex:1}
+#sharedProjectState.sync-error{color:#ffd39a}
+#sharedProjectBar+main{height:calc(100vh - 162px)}
+@media(max-width:760px){#sharedProjectBar+main{height:650px}}

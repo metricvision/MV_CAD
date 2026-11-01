@@ -1,0 +1,162 @@
+"""MetricCAD browser app and shared local CAD service. Run: python app.py."""
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import tempfile
+import threading
+from urllib.parse import urlsplit
+import webbrowser
+
+import cadquery as cq
+import engine
+from cad_service import CADService, CommandError, atomic_write, json_bytes
+
+ROOT = Path(__file__).resolve().parent
+
+
+class Handler(BaseHTTPRequestHandler):
+    def reply(self, data, kind="application/json", status=200, filename=None):
+        self.send_response(status)
+        self.send_header("Content-Type",kind)
+        self.send_header("Content-Length",str(len(data)))
+        self.send_header("X-Content-Type-Options","nosniff")
+        self.send_header("Cache-Control","no-store")
+        if filename: self.send_header("Content-Disposition",'attachment; filename="'+filename+'"')
+        self.end_headers()
+        try:self.wfile.write(data)
+        except (BrokenPipeError,ConnectionResetError):pass
+
+    def json_reply(self, value, status=200):
+        self.reply(json_bytes(value),status=status)
+
+    def check_origin(self):
+        port=self.server.server_port
+        if self.headers.get("Host") not in (f"127.0.0.1:{port}",f"localhost:{port}"):
+            raise CommandError("invalid_host","Host nicht erlaubt")
+        origin=self.headers.get("Origin")
+        if origin and origin not in (f"http://127.0.0.1:{port}",f"http://localhost:{port}"):
+            raise CommandError("invalid_origin","Origin nicht erlaubt")
+
+    def error_reply(self, exc):
+        if not isinstance(exc,CommandError):exc=CommandError("cad_error",str(exc))
+        status=409 if exc.code=="revision_conflict" else 403 if exc.code in ("invalid_host","invalid_origin","unauthorized") else 404 if exc.code in ("not_found","project_not_found") else 400
+        self.json_reply({"error":str(exc),"details":exc.payload()},status)
+
+    def do_GET(self):
+        try:
+            self.check_origin();path=urlsplit(self.path).path
+            if path=="/session":
+                return self.json_reply({"token":self.server.token,"default_project":"default","version":"0.23-mcp"})
+            if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})
+            routes={"/":"index.html","/index.html":"index.html","/assembly":"assembly.html","/assembly.html":"assembly.html",
+                    "/assembly.js":"assembly.js","/assembly.css":"assembly.css","/project_sync.js":"project_sync.js","/project_sync.css":"project_sync.css"}
+            if path in routes:
+                name=routes[path];kind={"html":"text/html; charset=utf-8","js":"application/javascript; charset=utf-8","css":"text/css; charset=utf-8"}[name.rsplit(".",1)[1]]
+                return self.reply((ROOT/name).read_bytes(),kind)
+            if path.startswith("/exports/"):
+                name=path[len("/exports/"):]
+                if not re.fullmatch(r"[A-Za-z0-9_-]+_r[0-9]+\.(json|step|stl)",name):raise CommandError("not_found","Export fehlt")
+                file=self.server.service.exports_dir/name
+                if not file.is_file():raise CommandError("not_found","Export fehlt")
+                kind={"json":"application/json","step":"application/step","stl":"model/stl"}[name.rsplit(".",1)[1]]
+                return self.reply(file.read_bytes(),kind,filename=name)
+            raise CommandError("not_found","Not found")
+        except Exception as exc:self.error_reply(exc)
+
+    def do_POST(self):
+        try:
+            self.check_origin();path=urlsplit(self.path).path
+            size=int(self.headers.get("Content-Length","0"))
+            if not 0<size<=4_000_000:raise CommandError("invalid_size","Anfrage muss zwischen 1 Byte und 4 MB groß sein")
+            if path=="/api":
+                if not secrets.compare_digest(self.headers.get("X-MetricCAD-Token",""),self.server.token):
+                    raise CommandError("unauthorized","CAD-Verbindung nicht authentifiziert. Verbindung neu laden.")
+            payload=json.loads(self.rfile.read(size),parse_constant=lambda v: (_ for _ in ()).throw(ValueError("Nicht endliche JSON-Zahl: "+v)))
+            if path=="/api":
+                if not isinstance(payload,dict) or set(payload)-{"action","arguments"}:raise CommandError("invalid_request","Ungültige CAD-Anfrage")
+                return self.json_reply(self.server.service.execute(payload.get("action"),payload.get("arguments")))
+            # The legacy endpoints compute previews; persistent writes use /api.
+            # All geometry, including assemblies, shares the same execution lock.
+            with self.server.service.lock:
+                if path.startswith("/assembly/"):
+                    import assembly
+                    if path=="/assembly/step":
+                        with tempfile.TemporaryDirectory() as directory:
+                            target=Path(directory)/"assembly.step";assembly.export_step(payload,target)
+                            return self.reply(target.read_bytes(),"application/step")
+                    if path not in ("/assembly/build","/assembly/solve"):raise CommandError("unknown_command","Unbekannter Befehl")
+                    return self.json_reply(assembly.prepare(payload,include_mesh=path=="/assembly/build"))
+                handlers={"/validate":engine.validate,"/build":engine.preview,"/sketch-solve":engine.solve_sketch,"/sketch-drag":engine.drag_sketch}
+                if path in handlers:return self.json_reply(handlers[path](payload))
+                if path not in ("/step","/stl"):raise CommandError("unknown_command","Unbekannter Befehl")
+                body,_=engine.build(payload)
+                with tempfile.TemporaryDirectory() as directory:
+                    target=Path(directory)/("model.stl" if path=="/stl" else "model.step")
+                    if path=="/stl":
+                        if not body.val().copy(mesh=False).exportStl(str(target),tolerance=.02,angularTolerance=.1,ascii=False,relative=False):
+                            raise ValueError("STL-Vernetzung fehlgeschlagen")
+                    else:cq.exporters.export(body,str(target))
+                    return self.reply(target.read_bytes(),"model/stl" if path=="/stl" else "application/step")
+        except Exception as exc:self.error_reply(exc)
+
+    def log_message(self,*args):pass
+
+
+@contextmanager
+def directory_lock(directory):
+    """Prevent two app processes from maintaining divergent histories on disk."""
+    directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
+    stream=(directory/"server.lock").open("a+b")
+    try:
+        if os.name=="nt":
+            import msvcrt
+            stream.seek(0);stream.write(b"0");stream.flush();stream.seek(0)
+            msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except OSError:
+        stream.close()
+        raise SystemExit("Für diesen Datenordner läuft bereits ein MetricCAD-Server.")
+    try:yield
+    finally:stream.close()
+
+
+def create_server(directory,port=8765):
+    service=CADService(directory)
+    server=ThreadingHTTPServer(("127.0.0.1",port),Handler)
+    server.daemon_threads=True
+    server.service=service;server.token=secrets.token_urlsafe(32)
+    service.base_url=f"http://127.0.0.1:{server.server_port}"
+    return server
+
+
+def main():
+    parser=argparse.ArgumentParser(description="MetricCAD mit gemeinsamer Projektverwaltung und MCP-Anbindung")
+    parser.add_argument("--port",type=int,default=8765,help="HTTP-Port; 0 wählt einen freien Port")
+    parser.add_argument("--data-dir",type=Path,default=Path(os.environ.get("METRICCAD_DATA_DIR",ROOT/".metriccad")))
+    parser.add_argument("--no-browser",action="store_true")
+    args=parser.parse_args()
+    with directory_lock(args.data_dir):
+        server=create_server(args.data_dir,args.port)
+        connection=args.data_dir.resolve()/"connection.json"
+        atomic_write(connection,json_bytes({"url":server.service.base_url,"token":server.token,"pid":os.getpid(),"version":"0.23-mcp"}))
+        try:connection.chmod(0o600)
+        except OSError:pass
+        print("MetricCAD läuft: "+server.service.base_url+"  |  Beenden: Strg+C",flush=True)
+        if not args.no_browser:threading.Timer(.5,lambda:webbrowser.open(server.service.base_url)).start()
+        try:server.serve_forever()
+        except KeyboardInterrupt:pass
+        finally:
+            server.server_close()
+            connection.unlink(missing_ok=True)
+
+
+if __name__=="__main__":main()

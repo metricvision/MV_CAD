@@ -1,0 +1,14 @@
+MetricCAD (repository: MV_CAD)
+Copyright 2026 MetricVision GmbH
+
+The original project code is licensed under the Apache License, Version 2.0.
+Third-party components remain under their respective licenses.
+
+This product makes use of facilities provided by the Open CASCADE Technology
+software through CadQuery and OCP. Open CASCADE Technology is licensed under
+the GNU Lesser General Public License version 2.1 with the Open CASCADE
+exception. See THIRD_PARTY_NOTICES.md for upstream sources and license details.
+
+The Apache License does not grant a general right to use the trade names,
+trademarks, service marks, or product names of MetricVision GmbH. Its exceptions
+for describing the origin of the work and reproducing this NOTICE still apply.

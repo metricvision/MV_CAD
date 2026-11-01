@@ -1,0 +1,14 @@
+# In ~/.codex/config.toml ergänzen. Die absoluten Pfade ersetzen.
+# app.py vorher starten. Dasselbe Python wie für die CAD-Installation verwenden.
+[mcp_servers.metriccad]
+command = "/ABSOLUTER/PFAD/MV_CAD/.venv/bin/python"
+args = ["/ABSOLUTER/PFAD/MV_CAD/mcp_server.py"]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+
+# Windows: TOML-Literalstrings mit einfachen Anführungszeichen erlauben Backslashes:
+# command = 'C:\PFAD\MV_CAD\.venv\Scripts\python.exe'
+# args = ['C:\PFAD\MV_CAD\mcp_server.py']
+
+# Bei eigenem --data-dir im App-Start:
+# args = ["/PFAD/mcp_server.py", "--connection-file", "/DATEN/connection.json"]
