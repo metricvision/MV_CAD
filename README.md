@@ -43,11 +43,12 @@ python3.12 -m venv .venv
 
 The browser opens at **http://127.0.0.1:8765**. Keep the terminal running while using the application. Stop the server with **Ctrl+C**.
 
-## Optional: model with AI
+## Let AI Do the Work
 
-MetricCAD exposes modeling tools through MCP. The included setup instructions use the **Codex CLI** to connect to the same local server as the browser.
+MetricCAD exposes its modeling tools through the Model Context Protocol (MCP).
+You can connect MCP-compatible AI clients such as Claude Code or the Codex CLI.
 
-For example, ask your assistant to create a part, fully constrain its sketches, and inspect the result. You can then continue editing it manually.
+For example, ask your assistant to create a part, fully constrain its sketches, and inspect the result. You can then continue editing it manually. Through the MV_CAD MCP integration, the AI assistant works with the same modeling operations available in the manual interface.
 
 ## Project status
 
