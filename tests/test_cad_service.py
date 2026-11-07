@@ -11,7 +11,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from cad_service import CADService,CommandError
+from backend.cad_service import CADService,CommandError
 from examples.build_plate import build,plate_sketch
 from PIL import Image
 

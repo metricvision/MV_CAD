@@ -15,8 +15,8 @@ from urllib.parse import urlsplit
 import webbrowser
 
 import cadquery as cq
-import engine
-from cad_service import CADService, CommandError, atomic_write, json_bytes
+from backend.geometry import engine
+from backend.cad_service import CADService, CommandError, atomic_write, json_bytes
 
 ROOT = Path(__file__).resolve().parent
 
@@ -55,8 +55,9 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/session":
                 return self.json_reply({"token":self.server.token,"default_project":"default","version":"0.23-mcp"})
             if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})
-            routes={"/":"index.html","/index.html":"index.html","/assembly":"assembly.html","/assembly.html":"assembly.html",
-                    "/assembly.js":"assembly.js","/assembly.css":"assembly.css","/project_sync.js":"project_sync.js","/project_sync.css":"project_sync.css"}
+            routes={"/":"frontend/index.html","/index.html":"frontend/index.html","/assembly":"frontend/assembly.html","/assembly.html":"frontend/assembly.html",
+                    "/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
+                    "/part_studio.js":"frontend/js/part_studio.js","/part_studio.css":"frontend/css/part_studio.css"}
             if path in routes:
                 name=routes[path];kind={"html":"text/html; charset=utf-8","js":"application/javascript; charset=utf-8","css":"text/css; charset=utf-8"}[name.rsplit(".",1)[1]]
                 return self.reply((ROOT/name).read_bytes(),kind)
@@ -86,7 +87,7 @@ class Handler(BaseHTTPRequestHandler):
             # All geometry, including assemblies, shares the same execution lock.
             with self.server.service.lock:
                 if path.startswith("/assembly/"):
-                    import assembly
+                    from backend.assembly import assembly
                     if path=="/assembly/step":
                         with tempfile.TemporaryDirectory() as directory:
                             target=Path(directory)/"assembly.step";assembly.export_step(payload,target)

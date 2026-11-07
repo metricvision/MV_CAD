@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
-from cad_schema import SketchInput, SketchEdit, Operation, HelixInput, FeatureParameters, data
+from backend.cad_schema import SketchInput, SketchEdit, Operation, HelixInput, FeatureParameters, data
 
 ROOT=Path(__file__).resolve().parent
 INSTRUCTIONS="""Use native MetricCAD sketches, driving dimensions and feature operations.
@@ -73,7 +73,7 @@ def make_server(client,host="127.0.0.1",port=8766):
     @mcp.tool(annotations=READ)
     def get_capabilities() -> dict[str, Any]:
         """Read supported operations, units, limits and modeling conventions before creating a model."""
-        preferences=json.loads((ROOT/"modeling_preferences.json").read_text(encoding="utf-8"))
+        preferences=json.loads((ROOT/"config"/"modeling_preferences.json").read_text(encoding="utf-8"))
         return {"application":"MetricCAD","version":"0.23-mcp","native_format":{"version":2,"features":[]},
                 "units":{"length":"mm","geometry_angles":"radians","dimension_angles":"degrees","revolve_and_helix_phase":"degrees"},
                 "geometry_types":["rect","circle","polyline","arc","ellipse","spline"],
@@ -194,7 +194,7 @@ def make_server(client,host="127.0.0.1",port=8766):
     @mcp.resource("metriccad://guide")
     def guide() -> str:
         """Native modeling and dimensioning workflow, reference semantics and examples."""
-        return (ROOT/"MODELING_GUIDE.md").read_text(encoding="utf-8")
+        return (ROOT/"docs"/"MODELING_GUIDE.md").read_text(encoding="utf-8")
 
     @mcp.resource("metriccad://examples/plate")
     def plate_example() -> str:

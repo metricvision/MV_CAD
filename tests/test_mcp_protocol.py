@@ -12,7 +12,7 @@ from urllib.request import Request,urlopen
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app import create_server
-from cad_service import atomic_write,json_bytes
+from backend.cad_service import atomic_write,json_bytes
 from examples.build_plate import plate_sketch
 from mcp import ClientSession,StdioServerParameters
 from mcp.client.stdio import stdio_client

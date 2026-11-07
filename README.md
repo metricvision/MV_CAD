@@ -66,7 +66,7 @@ Check geometry, dimensions, and exported files before using them for manufacturi
 
 | Resource | What it covers |
 |---|---|
-| [Modeling guide](MODELING_GUIDE.md) | Units, stable references, constraints, and an MCP modeling workflow |
+| [Modeling guide](docs/MODELING_GUIDE.md) | Units, stable references, constraints, and an MCP modeling workflow |
 | [Contributing](CONTRIBUTING.md) | Bug reports and code contributions; currently in German |
 | [Security](SECURITY.md) | Private reporting of security issues; currently in German |
 
