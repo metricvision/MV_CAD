@@ -58,7 +58,7 @@ MetricCAD is an **early version for testing and feedback**.
 - Fillets and helix sweeps have geometry-dependent limitations.
 - Drawing sheets with arranged views and title blocks are not included.
 - The intended setup is a local, single-user application. Public hosting and multi-user operation are not supported deployment targets for this release.
-- Full browser/WebGL integration testing remains unverified; see [development and testing](docs/DEVELOPMENT.md#verification-status).
+- Full browser/WebGL integration testing remains unverified.
 
 Check geometry, dimensions, and exported files before using them for manufacturing.
 
@@ -66,9 +66,7 @@ Check geometry, dimensions, and exported files before using them for manufacturi
 
 | Resource | What it covers |
 |---|---|
-| [Usage and MCP setup](docs/USAGE.md) | Saving, backups, synchronization, dimension layout, and AI connection |
 | [Modeling guide](MODELING_GUIDE.md) | Units, stable references, constraints, and an MCP modeling workflow |
-| [Development and testing](docs/DEVELOPMENT.md) | Architecture, test commands, and verification status |
 | [Contributing](CONTRIBUTING.md) | Bug reports and code contributions; currently in German |
 | [Security](SECURITY.md) | Private reporting of security issues; currently in German |
 
