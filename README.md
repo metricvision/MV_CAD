@@ -1,4 +1,4 @@
-# MetricCAD · MV_CAD
+# MV_CAD
 
 **Parametric 3D CAD with a local browser interface and optional AI-assisted modeling.**
 
