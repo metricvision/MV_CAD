@@ -49,8 +49,6 @@ MetricCAD exposes modeling tools through MCP. The included setup instructions us
 
 For example, ask your assistant to create a part, fully constrain its sketches, and inspect the result. You can then continue editing it manually.
 
-**[Set up Codex and MCP →](docs/USAGE.md#connect-codex-through-mcp)**
-
 ## Project status
 
 MetricCAD is an **early version for testing and feedback**.
