@@ -14,10 +14,10 @@ An open-source project by [**MetricVision GmbH**](https://metricvision.at).
 - **Sketch with dimensions and constraints:** define geometry and check its remaining degrees of freedom.
 - **Build parametric parts:** extrude, cut pockets, revolve, add fillets and chamfers, and sweep profiles along helices.
 - **Work with assemblies:** place parts and connect them with fixed, revolute, or slider joints.
-- **Edit with AI through MCP:** create and modify native sketches, dimensions, and features while keeping the model editable in the interface.
 - **Save and export:** retain the feature tree in native JSON, or export part geometry as STEP/STL and assemblies as STEP.
+- **Let AI do the modeling:** connect an MCP-compatible AI client such as Claude Code or the Codex CLI and describe the part you want. Your assistant can create sketches, apply dimensions and constraints, build 3D features, and inspect the result. It uses the same native modeling operations available in the manual interface, so you can open the sketches, change dimensions, and continue modeling by hand.
 
-**AI is optional.** Manual CAD modeling works without Codex or an AI account. The application runs on your computer; the browser is its interface. The current interface is in German.
+**AI is optional.** Manual CAD modeling works without an AI client or account. The application runs on your computer; the browser is its interface. AI tools currently control Part Studio projects; assemblies are edited manually. The current interface is in German.
 
 ## Quick start
 
