@@ -7,7 +7,7 @@ Create dimensioned sketches, build editable 3D parts, and combine them in assemb
 An open-source project by [**MetricVision GmbH**](https://metricvision.at).
 
 <!-- SCREENSHOT: Add docs/images/metriccad-interface.png, then remove the comment markers around the image below in both READMEs. Use a real screenshot with a 3D part and the feature tree visible. -->
-<!-- ![MetricCAD interface showing a 3D part and its editable feature tree](docs/images/metriccad-interface.png) -->
+![MetricCAD interface showing a 3D part and its editable feature tree](docs/images/3D_Ansicht.png)
 
 ## What you can do
 
