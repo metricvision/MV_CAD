@@ -31,13 +31,8 @@ Browser und dieselbe Adresse einschließlich Port, damit auch die bisher im
 Browser gespeicherte Baugruppe verfügbar bleibt. Exportierte Teil- und
 Baugruppen-JSON-Dateien können wie bisher geöffnet werden.
 
-`app.py` und `mcp_server.py` bleiben im Hauptordner. MCP wird inzwischen über
-„MCP starten“ in der Projektleiste aktiviert und über „MCP stoppen“ beendet.
-Ersetze den bisherigen MCP-Client-Eintrag mit Python-Pfad und Startbefehl durch
-die URL-Konfiguration aus `integrations/codex-mcp.example.toml`.
-Standardadresse: `http://127.0.0.1:8766/mcp`. Der Client muss auf demselben Rechner
-laufen. Der frühere stdio-Startweg entfällt; das CAD-Programm verwaltet den
-MCP-Prozess und reicht auch einen eigenen Datenordner automatisch weiter.
+`app.py` und `mcp_server.py` bleiben im Hauptordner. Die aktuelle MCP-Einrichtung
+mit UI-Start und URL-Konfiguration steht in der [README](../README.md#let-ai-do-the-work).
 
 ## Was geändert wurde
 
@@ -49,7 +44,7 @@ Ausführungsreihenfolge; es wurden keine ES-Module oder neuen Laufzeitabhängigk
 eingeführt.
 
 Die vorhandenen CAD-HTTP-Adressen, Projektformate, Standard-Datenpfade
-und MCP-Werkzeugnamen bleiben erhalten. Der oben beschriebene MCP-Startweg ersetzt
+und MCP-Werkzeugnamen bleiben erhalten. Der in der README beschriebene MCP-Startweg ersetzt
 die frühere Client-Prozesskonfiguration. Für die ausgelagerten Inhalte sind nur
 die beiden zusätzlichen Ressourcen `/part_studio.js` und `/part_studio.css`
 hinzugekommen.

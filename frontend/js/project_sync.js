@@ -20,13 +20,7 @@
     mcpBusy=true;$('mcpToggle').disabled=true;
     if(action!=='status')$('mcpState').textContent=action==='start'?'MCP startet …':'MCP stoppt …';
     try {
-      if(!token)await session();
-      const options=()=>action==='status'?{cache:'no-store',signal:AbortSignal.timeout(30000)}:{
-        method:'POST',headers:{'Content-Type':'application/json','X-MetricCAD-Token':token},body:'{}',signal:AbortSignal.timeout(30000)};
-      let response=await fetch('/mcp/'+action,options());
-      if(response.status===403){await session();response=await fetch('/mcp/'+action,options());}
-      const result=await response.json();
-      if(!response.ok)throw Error(result.error||'MCP nicht erreichbar.');
+      const result=await request('/mcp/'+action,action==='status'?undefined:{},30000);
       mcpRunning=result.running;
       $('mcpToggle').textContent=mcpRunning?'MCP stoppen':'MCP starten';
       $('mcpUrl').value=result.url;
@@ -56,17 +50,19 @@
     token = (await response.json()).token;
   }
 
-  async function api(action, arguments_ = {}, retried = false) {
+  async function request(path, payload, timeout=120000, retried=false) {
     if (!token) await session();
-    const response = await fetch('/api', {
-      method: 'POST', headers: {'Content-Type': 'application/json', 'X-MetricCAD-Token': token},
-      body: JSON.stringify({action, arguments: arguments_}), signal: AbortSignal.timeout(120000)
+    const options = {cache:'no-store', signal:AbortSignal.timeout(timeout)};
+    if (payload !== undefined) Object.assign(options, {
+      method:'POST', headers:{'Content-Type':'application/json', 'X-MetricCAD-Token':token}, body:JSON.stringify(payload)
     });
-    if (response.status === 403 && !retried) { await session(); return api(action, arguments_, true); }
+    const response = await fetch(path, options);
+    if (response.status === 403 && !retried) { await session(); return request(path,payload,timeout,true); }
     const result = await response.json();
-    if (!response.ok) { const error = Error(result.error || 'Projekt konnte nicht synchronisiert werden.'); error.details = result.details; throw error; }
+    if (!response.ok) { const error = Error(result.error || 'CAD-Anfrage fehlgeschlagen.'); error.details = result.details; throw error; }
     return result;
   }
+  const api = (action, arguments_={}) => request('/api',{action, arguments:arguments_});
 
   function showState() {
     const badge = $('sharedProjectState');

@@ -211,8 +211,7 @@ def make_server(client,port=8766):
 
 def main():
     parser=argparse.ArgumentParser(description="MetricCAD MCP adapter")
-    default=Path(os.environ.get("METRICCAD_DATA_DIR",ROOT/".metriccad"))/"connection.json"
-    parser.add_argument("--connection-file",type=Path,default=default)
+    parser.add_argument("--connection-file",type=Path,required=True)
     parser.add_argument("--port",type=int,default=8766,help="Lokaler MCP-Port")
     args=parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
