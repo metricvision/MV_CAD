@@ -1,7 +1,6 @@
 """MCP adapter to the running MetricCAD app (one shared geometry process).
 
-Run app.py first, then configure Codex to launch this file over stdio.
-Only MCP protocol messages are written to stdout.
+Started and stopped by app.py. Clients connect through local Streamable HTTP.
 """
 from __future__ import annotations
 
@@ -13,11 +12,12 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, ProxyHandler, build_opener
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
+from starlette.responses import JSONResponse
 from backend.cad_schema import SketchInput, SketchEdit, Operation, HelixInput, FeatureParameters, data
 
 ROOT=Path(__file__).resolve().parent
@@ -39,6 +39,7 @@ class CADClient:
     def __init__(self, connection_file, timeout=180):
         self.connection_file=Path(connection_file)
         self.timeout=timeout
+        self.http=build_opener(ProxyHandler({}))
 
     def call(self,action,arguments=None):
         try:
@@ -51,7 +52,7 @@ class CADClient:
         payload=json.dumps({"action":action,"arguments":arguments or {}},allow_nan=False).encode()
         request=Request(url+"/api",data=payload,headers={"Content-Type":"application/json","X-MetricCAD-Token":connection["token"]})
         try:
-            with urlopen(request,timeout=self.timeout) as response:return json.load(response)
+            with self.http.open(request,timeout=self.timeout) as response:return json.load(response)
         except HTTPError as exc:
             try:error=json.loads(exc.read())
             except (ValueError,OSError):error={"error":str(exc)}
@@ -60,8 +61,12 @@ class CADClient:
             raise ToolError("CAD-Verbindung unterbrochen. Prüfen, ob app.py läuft. Vor dem Wiederholen einer Änderung get_project aufrufen; eine Berechnung könnte bereits übernommen worden sein.") from exc
 
 
-def make_server(client,host="127.0.0.1",port=8766):
-    mcp=FastMCP("MetricCAD",instructions=INSTRUCTIONS,host=host,port=port,stateless_http=True)
+def make_server(client,port=8766):
+    mcp=FastMCP("MetricCAD",instructions=INSTRUCTIONS,host="127.0.0.1",port=port,stateless_http=True,log_level="WARNING")
+
+    @mcp.custom_route("/health",methods=["GET"])
+    async def health(request):
+        return JSONResponse({"pid":os.getpid()})
 
     def invoke(action,arguments,keep_document=False):
         result=client.call(action,arguments)
@@ -208,12 +213,11 @@ def main():
     parser=argparse.ArgumentParser(description="MetricCAD MCP adapter")
     default=Path(os.environ.get("METRICCAD_DATA_DIR",ROOT/".metriccad"))/"connection.json"
     parser.add_argument("--connection-file",type=Path,default=default)
-    parser.add_argument("--transport",choices=["stdio","streamable-http"],default="stdio")
-    parser.add_argument("--port",type=int,default=8766,help="Only used for local Streamable HTTP")
+    parser.add_argument("--port",type=int,default=8766,help="Lokaler MCP-Port")
     args=parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     server=make_server(CADClient(args.connection_file),port=args.port)
-    server.run(transport=args.transport)
+    server.run(transport="streamable-http")
 
 
 if __name__=="__main__":main()

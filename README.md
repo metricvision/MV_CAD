@@ -45,8 +45,29 @@ The browser opens at **http://127.0.0.1:8765**. Keep the terminal running while 
 
 ## Let AI Do the Work
 
-MetricCAD exposes its modeling tools through the Model Context Protocol (MCP).
-You can connect MCP-compatible AI clients such as Claude Code or the Codex CLI.
+1. Start `app.py` as above and click **MCP starten** in the Part Studio project bar.
+2. Copy the displayed address (default **http://127.0.0.1:8766/mcp**) into an AI
+   client that supports **Streamable HTTP MCP**. The client must run on this computer.
+   For Codex CLI, replace the old MetricCAD entry in `~/.codex/config.toml` with
+   [this URL-only configuration](integrations/codex-mcp.example.toml), then restart the client.
+3. Ask the assistant to create or edit a project, then select that project in the CAD interface.
+
+The CAD app owns the MCP process. No Python command or project path is needed in
+the AI client. **MCP stoppen** disconnects clients; stopping `app.py` also stops MCP.
+Closing a browser tab does not stop the CAD app or MCP. MCP is off after each app
+restart and remains optional. The former stdio transport is no longer supported.
+
+MCP listens only on `127.0.0.1`, without a separate MCP access token. Other local
+programs can therefore use its CAD tools while it is running. The internal
+CAD session token remains in place. MCP exposes CAD operations, not general
+shell or filesystem access; any separate permissions of the AI client must be
+configured in that client. Cloud clients cannot reach this local address.
+
+If port 8766 is occupied, stop the other service or start the app with
+`--mcp-port 8767` and use the address shown in the UI. Startup errors are shown
+there; further details are in `mcp.log` in the CAD data directory (default
+`.metriccad`). A custom `--data-dir` is passed to MCP automatically. No additional
+dependencies are required.
 
 For example, ask your assistant to create a part, fully constrain its sketches, and inspect the result. You can then continue editing it manually. Through the MV_CAD MCP integration, the AI assistant works with the same modeling operations available in the manual interface.
 

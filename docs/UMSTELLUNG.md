@@ -31,11 +31,13 @@ Browser und dieselbe Adresse einschließlich Port, damit auch die bisher im
 Browser gespeicherte Baugruppe verfügbar bleibt. Exportierte Teil- und
 Baugruppen-JSON-Dateien können wie bisher geöffnet werden.
 
-`app.py` und `mcp_server.py` bleiben im Hauptordner. Wenn der vollständige
-Installationspfad gleich bleibt, ist keine Anpassung der MCP-Konfiguration nötig.
-Wenn du den neuen Ordner an einem anderen Ort verwendest, passe nur die absoluten
-Pfade zum Python und zu `mcp_server.py` in deiner bestehenden MCP-Konfiguration an.
-Die Beispielkonfiguration liegt jetzt unter `integrations/codex-mcp.example.toml`.
+`app.py` und `mcp_server.py` bleiben im Hauptordner. MCP wird inzwischen über
+„MCP starten“ in der Projektleiste aktiviert und über „MCP stoppen“ beendet.
+Ersetze den bisherigen MCP-Client-Eintrag mit Python-Pfad und Startbefehl durch
+die URL-Konfiguration aus `integrations/codex-mcp.example.toml`.
+Standardadresse: `http://127.0.0.1:8766/mcp`. Der Client muss auf demselben Rechner
+laufen. Der frühere stdio-Startweg entfällt; das CAD-Programm verwaltet den
+MCP-Prozess und reicht auch einen eigenen Datenordner automatisch weiter.
 
 ## Was geändert wurde
 
@@ -46,8 +48,9 @@ wurden nicht umgeschrieben. JavaScript bleibt ein klassisches Skript mit derselb
 Ausführungsreihenfolge; es wurden keine ES-Module oder neuen Laufzeitabhängigkeiten
 eingeführt.
 
-Die vorhandenen HTTP-Adressen, Startbefehle, Projektformate, Standard-Datenpfade
-und MCP-Werkzeugnamen bleiben erhalten. Für die ausgelagerten Inhalte sind nur
+Die vorhandenen CAD-HTTP-Adressen, Projektformate, Standard-Datenpfade
+und MCP-Werkzeugnamen bleiben erhalten. Der oben beschriebene MCP-Startweg ersetzt
+die frühere Client-Prozesskonfiguration. Für die ausgelagerten Inhalte sind nur
 die beiden zusätzlichen Ressourcen `/part_studio.js` und `/part_studio.css`
 hinzugekommen.
 

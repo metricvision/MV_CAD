@@ -3,6 +3,8 @@
 #sharedProjectBar select{max-width:230px;width:auto;padding:3px 7px;background:#1c3343;color:#e0eaf4;border:1px solid #365164;border-radius:4px;font-size:12px}
 #sharedProjectBar button{font-size:11px;padding:3px 7px}
 #sharedProjectState{color:#8ccebb;flex:1}
-#sharedProjectState.sync-error{color:#ffd39a}
+#sharedProjectBar .sync-error{color:#ffd39a}
+#mcpState{color:#8ccebb;max-width:260px;white-space:normal}
+#mcpUrl{width:225px;flex-shrink:0;margin:0;padding:3px 7px;font-size:11px}
 #sharedProjectBar+main{height:calc(100vh - 162px)}
 @media(max-width:760px){#sharedProjectBar+main{height:650px}}

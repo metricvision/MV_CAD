@@ -9,9 +9,15 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
+import socket
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, build_opener
 import webbrowser
 
 import cadquery as cq
@@ -55,6 +61,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/session":
                 return self.json_reply({"token":self.server.token,"default_project":"default","version":"0.23-mcp"})
             if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})
+            if path=="/mcp/status":return self.json_reply(self.server.mcp_status())
             routes={"/":"frontend/index.html","/index.html":"frontend/index.html","/assembly":"frontend/assembly.html","/assembly.html":"frontend/assembly.html",
                     "/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
                     "/part_studio.js":"frontend/js/part_studio.js","/part_studio.css":"frontend/css/part_studio.css"}
@@ -76,10 +83,13 @@ class Handler(BaseHTTPRequestHandler):
             self.check_origin();path=urlsplit(self.path).path
             size=int(self.headers.get("Content-Length","0"))
             if not 0<size<=4_000_000:raise CommandError("invalid_size","Anfrage muss zwischen 1 Byte und 4 MB groß sein")
-            if path=="/api":
+            if path in ("/api","/mcp/start","/mcp/stop"):
                 if not secrets.compare_digest(self.headers.get("X-MetricCAD-Token",""),self.server.token):
                     raise CommandError("unauthorized","CAD-Verbindung nicht authentifiziert. Verbindung neu laden.")
             payload=json.loads(self.rfile.read(size),parse_constant=lambda v: (_ for _ in ()).throw(ValueError("Nicht endliche JSON-Zahl: "+v)))
+            if path in ("/mcp/start","/mcp/stop"):
+                if payload!={}:raise CommandError("invalid_request","MCP-Steuerung erwartet ein leeres Objekt")
+                return self.json_reply(self.server.mcp_start() if path=="/mcp/start" else self.server.mcp_stop())
             if path=="/api":
                 if not isinstance(payload,dict) or set(payload)-{"action","arguments"}:raise CommandError("invalid_request","Ungültige CAD-Anfrage")
                 return self.json_reply(self.server.service.execute(payload.get("action"),payload.get("arguments")))
@@ -130,34 +140,114 @@ def directory_lock(directory):
     finally:stream.close()
 
 
-def create_server(directory,port=8765):
-    service=CADService(directory)
-    server=ThreadingHTTPServer(("127.0.0.1",port),Handler)
-    server.daemon_threads=True
-    server.service=service;server.token=secrets.token_urlsafe(32)
-    service.base_url=f"http://127.0.0.1:{server.server_port}"
-    return server
+class CADServer(ThreadingHTTPServer):
+    daemon_threads=True
+
+    def __init__(self,directory,port,mcp_port):
+        self.service=CADService(directory)
+        self.mcp_port=mcp_port
+        self.mcp_process=None
+        self.mcp_error=""
+        self.mcp_lock=threading.RLock()
+        self.closed=False
+        self.connection=None
+        super().__init__(("127.0.0.1",port),Handler)
+        self.token=secrets.token_urlsafe(32)
+        self.service.base_url=f"http://127.0.0.1:{self.server_port}"
+        self.connection=self.service.directory/"connection.json"
+        try:
+            atomic_write(self.connection,json_bytes({"url":self.service.base_url,"token":self.token,"pid":os.getpid(),"version":"0.23-mcp"}))
+            try:self.connection.chmod(0o600)
+            except OSError:pass
+        except Exception:
+            super().server_close()
+            raise
+
+    def mcp_status(self):
+        with self.mcp_lock:
+            if self.mcp_process and self.mcp_process.poll() is not None:
+                self.mcp_error="MCP wurde unerwartet beendet. Details: .metriccad/mcp.log bzw. im eigenen Datenordner."
+                self.mcp_process=None
+            return {"running":self.mcp_process is not None,"url":f"http://127.0.0.1:{self.mcp_port}/mcp","error":self.mcp_error}
+
+    def mcp_start(self):
+        with self.mcp_lock:
+            if self.closed:raise CommandError("mcp_closed","CAD-Server wird beendet")
+            if self.mcp_status()["running"]:return self.mcp_status()
+            self.mcp_error=""
+            # Report occupied ports before launch; never attach to someone else's server.
+            try:
+                with socket.socket() as probe:
+                    if os.name=="nt":probe.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+                    else:probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+                    probe.bind(("127.0.0.1",self.mcp_port))
+                    self.mcp_port=probe.getsockname()[1]
+            except OSError as exc:
+                self.mcp_error=f"MCP-Port {self.mcp_port} ist belegt oder nicht verfügbar."
+                raise CommandError("mcp_start_failed",self.mcp_error) from exc
+            try:
+                with (self.service.directory/"mcp.log").open("w",encoding="utf-8") as log:
+                    self.mcp_process=subprocess.Popen(
+                        [sys.executable,str(ROOT/"mcp_server.py"),"--connection-file",str(self.connection),"--port",str(self.mcp_port)],
+                        cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=log,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0,
+                        start_new_session=os.name!="nt")
+                opener=build_opener(ProxyHandler({}))
+                deadline=time.monotonic()+20
+                while self.mcp_process.poll() is None and time.monotonic()<deadline:
+                    try:
+                        with opener.open(f"http://127.0.0.1:{self.mcp_port}/health",timeout=.3) as response:
+                            if json.load(response).get("pid")==self.mcp_process.pid:
+                                return self.mcp_status()
+                    except (OSError,ValueError):pass
+                    time.sleep(.1)
+                raise RuntimeError("MCP-Start fehlgeschlagen. Details: mcp.log im Datenordner.")
+            except Exception as exc:
+                self.mcp_stop()
+                self.mcp_error=str(exc)
+                raise CommandError("mcp_start_failed",self.mcp_error) from exc
+
+    def mcp_stop(self):
+        with self.mcp_lock:
+            if self.mcp_process:
+                if self.mcp_process.poll() is None:
+                    self.mcp_process.terminate()
+                    try:self.mcp_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.mcp_process.kill();self.mcp_process.wait()
+                self.mcp_process=None
+            self.mcp_error=""
+            return self.mcp_status()
+
+    def server_close(self):
+        with self.mcp_lock:
+            self.closed=True
+            self.mcp_stop()
+            if self.connection:self.connection.unlink(missing_ok=True)
+        super().server_close()
+
+
+def create_server(directory,port=8765,mcp_port=8766):
+    return CADServer(directory,port,mcp_port)
 
 
 def main():
     parser=argparse.ArgumentParser(description="MetricCAD mit gemeinsamer Projektverwaltung und MCP-Anbindung")
     parser.add_argument("--port",type=int,default=8765,help="HTTP-Port; 0 wählt einen freien Port")
+    parser.add_argument("--mcp-port",type=int,default=8766,help="Lokaler MCP-Port (Standard: 8766)")
     parser.add_argument("--data-dir",type=Path,default=Path(os.environ.get("METRICCAD_DATA_DIR",ROOT/".metriccad")))
     parser.add_argument("--no-browser",action="store_true")
     args=parser.parse_args()
     with directory_lock(args.data_dir):
-        server=create_server(args.data_dir,args.port)
-        connection=args.data_dir.resolve()/"connection.json"
-        atomic_write(connection,json_bytes({"url":server.service.base_url,"token":server.token,"pid":os.getpid(),"version":"0.23-mcp"}))
-        try:connection.chmod(0o600)
-        except OSError:pass
+        server=create_server(args.data_dir,args.port,args.mcp_port)
+        def stop(signum,frame):raise KeyboardInterrupt
+        signal.signal(signal.SIGTERM,stop)
         print("MetricCAD läuft: "+server.service.base_url+"  |  Beenden: Strg+C",flush=True)
         if not args.no_browser:threading.Timer(.5,lambda:webbrowser.open(server.service.base_url)).start()
         try:server.serve_forever()
         except KeyboardInterrupt:pass
         finally:
             server.server_close()
-            connection.unlink(missing_ok=True)
 
 
 if __name__=="__main__":main()

@@ -12,6 +12,35 @@
   bar.id = 'sharedProjectBar';
   bar.innerHTML = '<label>Projekt <select id="sharedProjectSelect" aria-label="Projekt auswählen"></select></label><span id="sharedProjectState" role="status">Projekt wird geladen …</span><button id="sharedProjectReload" hidden>Serverstand laden</button><button id="sharedProjectFork" hidden>Entwurf als neues Projekt</button><button id="sharedProjectBackup" hidden>Entwurf herunterladen</button>';
   document.querySelector('main').before(bar);
+  bar.insertAdjacentHTML('beforeend','<button id="mcpToggle" disabled>MCP starten</button><span id="mcpState" role="status">MCP wird geprüft …</span><input id="mcpUrl" aria-label="MCP-Adresse" title="Streamable HTTP · nur auf diesem Rechner erreichbar" readonly hidden><button id="mcpCopy" hidden>Adresse kopieren</button>');
+  let mcpRunning=false, mcpBusy=false;
+
+  async function updateMCP(action='status') {
+    if(mcpBusy)return;
+    mcpBusy=true;$('mcpToggle').disabled=true;
+    if(action!=='status')$('mcpState').textContent=action==='start'?'MCP startet …':'MCP stoppt …';
+    try {
+      if(!token)await session();
+      const options=()=>action==='status'?{cache:'no-store',signal:AbortSignal.timeout(30000)}:{
+        method:'POST',headers:{'Content-Type':'application/json','X-MetricCAD-Token':token},body:'{}',signal:AbortSignal.timeout(30000)};
+      let response=await fetch('/mcp/'+action,options());
+      if(response.status===403){await session();response=await fetch('/mcp/'+action,options());}
+      const result=await response.json();
+      if(!response.ok)throw Error(result.error||'MCP nicht erreichbar.');
+      mcpRunning=result.running;
+      $('mcpToggle').textContent=mcpRunning?'MCP stoppen':'MCP starten';
+      $('mcpUrl').value=result.url;
+      $('mcpUrl').hidden=$('mcpCopy').hidden=!mcpRunning;
+      $('mcpState').textContent=result.error||(mcpRunning?'MCP aktiv · lokal':'MCP aus');
+      $('mcpState').className=result.error?'sync-error':'';
+    } catch(error) {$('mcpState').textContent=error.message;$('mcpState').className='sync-error';}
+    finally {mcpBusy=false;$('mcpToggle').disabled=false;}
+  }
+  $('mcpToggle').onclick=()=>updateMCP(mcpRunning?'stop':'start');
+  $('mcpCopy').onclick=async()=>{
+    try {await navigator.clipboard.writeText($('mcpUrl').value);$('mcpState').textContent='Adresse kopiert';}
+    catch {$('mcpUrl').focus();$('mcpUrl').select();$('mcpState').textContent='Adresse markieren und kopieren';}
+  };
 
   const snapshot = () => JSON.stringify(doc);
   const needsFinalize = () => !!project?.pending_sketch && mode !== '2d' && !dirty;
@@ -225,6 +254,6 @@
     busy=true;render();
     try{await session();const id=new URLSearchParams(location.search).get('project')||'default';await loadProject(id);}
     catch(error){errorText=error.message;showState();}
-    finally{busy=false;render();setInterval(poll,1000);}
+    finally{busy=false;render();setInterval(poll,1000);updateMCP();setInterval(updateMCP,3000);}
   })();
 })();

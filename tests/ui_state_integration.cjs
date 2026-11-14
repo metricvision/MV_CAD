@@ -9,14 +9,14 @@ const {JSDOM,VirtualConsole}=require(process.env.JSDOM_MODULE||'jsdom');
 const {createCanvas}=require(process.env.CANVAS_MODULE||'@napi-rs/canvas');
 const root=path.resolve(__dirname,'..');
 const directory=fs.mkdtempSync(path.join(os.tmpdir(),'metriccad-ui-state-'));
-const server=spawn(process.env.METRICCAD_TEST_PYTHON||'python',['-u',path.join(root,'app.py'),'--no-browser','--port','0','--data-dir',directory],{cwd:root,stdio:['ignore','pipe','pipe']});
+const server=spawn(process.env.METRICCAD_TEST_PYTHON||'python',['-u',path.join(root,'app.py'),'--no-browser','--port','0','--mcp-port','0','--data-dir',directory],{cwd:root,stdio:['ignore','pipe','pipe']});
 const errors=[];let dom;
 const startup=new Promise((resolve,reject)=>{
   const timer=setTimeout(()=>reject(Error('CAD startup timed out')),30000);let log='';
   server.on('error',reject);server.stderr.on('data',data=>process.stderr.write(data));
   server.stdout.on('data',data=>{log+=data;const match=log.match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0]);}});
 });
-async function waitFor(check,label){const until=Date.now()+15000;while(Date.now()<until){if(check())return;await new Promise(r=>setTimeout(r,25));}throw Error('Timed out: '+label+'\n'+errors.join('\n'));}
+async function waitFor(check,label){const until=Date.now()+30000;while(Date.now()<until){if(check())return;await new Promise(r=>setTimeout(r,25));}throw Error('Timed out: '+label+'\n'+errors.join('\n'));}
 
 (async()=>{
   const url=await startup;const token=JSON.parse(fs.readFileSync(path.join(directory,'connection.json'),'utf8')).token;
@@ -39,6 +39,21 @@ async function waitFor(check,label){const until=Date.now()+15000;while(Date.now(
   await load();let w=dom.window;
   assert.equal(w.document.getElementById('save').disabled,false);
   assert.match(w.document.getElementById('tree').textContent,/Grundplatte/);
+  await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','initial MCP status');
+  w.document.getElementById('mcpToggle').click();
+  await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aktiv · lokal','MCP start button');
+  const mcpUrl=w.document.getElementById('mcpUrl').value;
+  assert.match(mcpUrl,/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+  assert.equal(w.document.getElementById('mcpUrl').hidden,false);
+  w.document.getElementById('mcpCopy').click();
+  await waitFor(()=>w.document.activeElement.id==='mcpUrl','copy fallback selects URL');
+  assert.equal(w.document.getElementById('mcpUrl').selectionEnd,mcpUrl.length);
+  await load();w=dom.window;
+  await waitFor(()=>w.document.getElementById('mcpToggle').textContent==='MCP stoppen','MCP persists across reload');
+  w.document.getElementById('mcpToggle').click();
+  await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','MCP stop button');
+  assert.equal(w.document.getElementById('mcpUrl').hidden,true);
+
   project=(await api('set_dimension',{project_id:project.id,expected_revision:project.revision,sketch_id:'plate',dimension_id:'width',value:100})).project;
   await waitFor(()=>w.metriccadSync.project.revision===project.revision,'external change');
   assert.equal(w.eval('doc.features[0].dimensions.find(d=>d.id==="width").value'),100);
@@ -70,7 +85,21 @@ async function waitFor(check,label){const until=Date.now()+15000;while(Date.now(
   await load();w=dom.window;
   assert.equal(w.eval('doc.features[0].dimensions.find(d=>d.id==="width").value'),110);
   assert.deepEqual(errors,[]);
-  console.log('PASS: actual frontend scripts, HTTP service, live updates, dimension dialog, deferred rebuild, conflict preservation, shared undo and reload (DOM environment; no WebGL).');
+  await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','MCP ready to restart');
+  w.document.getElementById('mcpToggle').click();
+  await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aktiv · lokal','MCP restart');
+  const healthUrl=w.document.getElementById('mcpUrl').value.replace(/\/mcp$/,'/health');
+  assert.equal((await fetch(healthUrl)).ok,true);
+  dom.window.close();dom=null;
+  const exited=new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(Error('CAD shutdown timed out')),10000);
+    server.once('exit',code=>{clearTimeout(timer);resolve(code);});
+  });
+  server.kill('SIGTERM');
+  assert.equal(await exited,0);
+  await assert.rejects(fetch(healthUrl));
+  assert.equal(fs.existsSync(path.join(directory,'connection.json')),false);
+  console.log('PASS: MCP start/stop/status/copy/reload/restart/app shutdown, actual frontend scripts, HTTP service, live updates, dimension dialog, deferred rebuild, conflict preservation, shared undo and reload (DOM environment; no WebGL).');
 })().catch(e=>{console.error(e);if(dom)console.error('UI STATE',dom.window.document.getElementById('sharedProjectState')?.textContent,dom.window.document.getElementById('status')?.textContent);process.exitCode=1;}).finally(async()=>{
   if(dom)dom.window.close();server.kill('SIGTERM');
   await new Promise(resolve=>{if(server.exitCode!==null)return resolve();server.once('exit',resolve);setTimeout(resolve,3000);});
