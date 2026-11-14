@@ -66,7 +66,7 @@ def make_server(client,port=8766):
 
     @mcp.custom_route("/health",methods=["GET"])
     async def health(request):
-        return JSONResponse({"pid":os.getpid()})
+        return JSONResponse({"instance":os.environ.get("METRICCAD_MCP_INSTANCE"),"pid":os.getpid()})
 
     def invoke(action,arguments,keep_document=False):
         result=client.call(action,arguments)

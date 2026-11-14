@@ -3,11 +3,13 @@ import asyncio
 from datetime import timedelta
 import json
 import socket
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import httpx
 from urllib.error import HTTPError
 from urllib.request import Request,urlopen
@@ -116,6 +118,36 @@ class MCPProtocol(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state["running"])
         self.assertIn("unerwartet",state["error"])
         self.assertTrue((await self.control("start"))["running"])
+
+    async def test_launcher_with_different_server_pid(self):
+        # Simulate a venv launcher that owns a separate interpreter process.
+        launcher="""import signal,subprocess,sys
+child=subprocess.Popen(sys.argv[1:])
+def stop(*args):
+    child.terminate();child.wait();raise SystemExit(0)
+signal.signal(signal.SIGTERM,stop)
+raise SystemExit(child.wait())
+"""
+        spawn=subprocess.Popen
+        def launch(command,**options):
+            return spawn([sys.executable,"-c",launcher,*command],**options)
+        with patch("app.subprocess.Popen",side_effect=launch):
+            state=await self.control("start")
+        self.assertTrue(state["running"])
+        with urlopen(state["url"].replace("/mcp","/health")) as response:health=json.load(response)
+        self.assertNotEqual(health["pid"],self.server.mcp_process.pid)
+        await self.control("stop")
+
+    async def test_silent_start_failure_is_written_to_log(self):
+        spawn=subprocess.Popen
+        def launch(command,**options):
+            return spawn([sys.executable,"-c","raise SystemExit(7)"],**options)
+        with patch("app.subprocess.Popen",side_effect=launch):
+            with self.assertRaises(HTTPError):await self.control("start")
+        log=(self.server.service.directory/"mcp.log").read_text(encoding="utf-8")
+        self.assertIn("MCP-Start",log)
+        self.assertIn("Code 7",log)
+        self.assertIsNone(self.server.mcp_process)
 
     async def test_http_requires_session_token_and_detects_origin(self):
         for path in ("/api","/mcp/start","/mcp/stop"):

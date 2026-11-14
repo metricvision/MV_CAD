@@ -186,25 +186,34 @@ class CADServer(ThreadingHTTPServer):
                 self.mcp_error=f"MCP-Port {self.mcp_port} ist belegt oder nicht verfügbar."
                 raise CommandError("mcp_start_failed",self.mcp_error) from exc
             try:
+                instance=secrets.token_hex(16)
                 with (self.service.directory/"mcp.log").open("w",encoding="utf-8") as log:
+                    log.write(f"MCP-Start auf 127.0.0.1:{self.mcp_port}\n");log.flush()
                     self.mcp_process=subprocess.Popen(
-                        [sys.executable,str(ROOT/"mcp_server.py"),"--connection-file",str(self.connection),"--port",str(self.mcp_port)],
+                        [sys.executable,"-u",str(ROOT/"mcp_server.py"),"--connection-file",str(self.connection),"--port",str(self.mcp_port)],
                         cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=log,
+                        env={**os.environ,"METRICCAD_MCP_INSTANCE":instance},
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name=="nt" else 0,
                         start_new_session=os.name!="nt")
                 opener=build_opener(ProxyHandler({}))
                 deadline=time.monotonic()+20
+                last_check="Noch keine Antwort."
                 while self.mcp_process.poll() is None and time.monotonic()<deadline:
                     try:
                         with opener.open(f"http://127.0.0.1:{self.mcp_port}/health",timeout=.3) as response:
-                            if json.load(response).get("pid")==self.mcp_process.pid:
+                            if json.load(response).get("instance")==instance:
                                 return self.mcp_status()
-                    except (OSError,ValueError):pass
+                            last_check="Antwort gehört nicht zu diesem MCP-Start."
+                    except (OSError,ValueError) as exc:last_check=str(exc)
                     time.sleep(.1)
-                raise RuntimeError("MCP-Start fehlgeschlagen. Details: mcp.log im Datenordner.")
+                code=self.mcp_process.poll()
+                reason=f"MCP-Prozess beendet (Code {code})." if code is not None else f"Keine MCP-Startbestätigung nach 20 Sekunden: {last_check}"
+                raise RuntimeError(reason)
             except Exception as exc:
                 self.mcp_stop()
                 self.mcp_error=str(exc)
+                with (self.service.directory/"mcp.log").open("a",encoding="utf-8") as log:
+                    log.write("Startfehler: "+self.mcp_error+"\n")
                 raise CommandError("mcp_start_failed",self.mcp_error) from exc
 
     def mcp_stop(self):
