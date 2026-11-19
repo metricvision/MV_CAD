@@ -30,7 +30,7 @@ async function selectOriginPlane(p){plane=p;selectedFace=null;hoverPlane=p;hover
 
 async function selectNode(f,kind){if(geometrySaving||busy)return;if(dirty&&!(await update()))return;edgeTool=null;edgeSelection=[];hoverEdge=null;selected=f.id;selectedKind=kind;selectedFace=null;dimensionTool=false;dimensionPicks=[];closeDimensionEditor();tool=bind=null;context=null;mode='3d';render();}
 function symmetricExtentControl(f){const l=document.createElement('label');l.style.display='flex';l.style.gap='8px';const symmetric=document.createElement('input');symmetric.id='symmetricExtent';symmetric.type='checkbox';symmetric.style.width='auto';symmetric.checked=!!f.symmetric;symmetric.disabled=busy||geometrySaving;symmetric.onchange=()=>{const value=symmetric.checked;mutate(()=>f.symmetric=value);autoUpdate()};l.append(symmetric,document.createTextNode('Gespiegelte Ausdehnung'));$('edit').append(l);if(f.symmetric)note('Maß pro Seite: '+f.depth+' mm · Gesamtausdehnung: '+(2*f.depth)+' mm');}
-function featureLabel(f){const index=doc.features.filter(x=>x.op===f.op).findIndex(x=>x.id===f.id)+1;return (f.op==='helix'?'Helix ':f.op==='sweep'?'Helix-Sweep ':f.op==='sweep-pocket'?'Helix-Abtrag ':f.op==='revolve'?'Rotationskörper ':f.op==='revolve-pocket'?'Rotationstasche ':f.op==='pad'?'Aufpolsterung ':f.op==='pocket'?'Tasche ':f.op==='fillet'?'Verrundung ':f.op==='chamfer'?'Fase ':'Skizze ')+index;}
+function featureLabel(f,index=doc.features.filter(x=>x.op===f.op).findIndex(x=>x.id===f.id)+1){return (f.op==='helix'?'Helix ':f.op==='sweep'?'Helix-Sweep ':f.op==='sweep-pocket'?'Helix-Abtrag ':f.op==='revolve'?'Rotationskörper ':f.op==='revolve-pocket'?'Rotationstasche ':f.op==='pad'?'Aufpolsterung ':f.op==='pocket'?'Tasche ':f.op==='fillet'?'Verrundung ':f.op==='chamfer'?'Fase ':'Skizze ')+index;}
 function treeRow(parent,{key,label,icon,kind,f,children}){const row=document.createElement('div');row.className='node-row';
  if(children){const arrow=document.createElement('button');arrow.className='node-arrow';arrow.textContent=collapsedNodes.has(key)?'▸':'▾';arrow.setAttribute('aria-label',label+(collapsedNodes.has(key)?' aufklappen':' zuklappen'));arrow.setAttribute('aria-expanded',String(!collapsedNodes.has(key)));arrow.onclick=()=>{if(collapsedNodes.has(key))collapsedNodes.delete(key);else collapsedNodes.add(key);render()};row.append(arrow)}else{const spacer=document.createElement('span');spacer.className='node-spacer';row.append(spacer)}
  const name=document.createElement('button');name.className='node-name'+(f&&selected===f.id&&selectedKind===kind?' selected':'');name.title=label;name.setAttribute('aria-label',label);const symbol=document.createElement('span');symbol.className='node-icon';symbol.textContent=icon;const text=document.createElement('span');text.textContent=label;name.append(symbol,text);if(f){name.onclick=()=>selectNode(f,kind);if(kind==='sketch')name.ondblclick=()=>editSketch(f)}else name.onclick=()=>{if(collapsedNodes.has(key))collapsedNodes.delete(key);else collapsedNodes.add(key);render()};row.append(name);parent.append(row);
@@ -258,7 +258,23 @@ function edgeDraftPanel(){note(edgeTool==='fillet'?'Kantenverrundung':'Symmetris
 async function applyEdges(){if(edgeApplying||busy||!edgeTool||!edgeSelection.length)return;const amount=Number($('edgeValue').value);if(!(amount>0&&amount<=10000)){status('Bitte ein positives Maß bis 10000 mm eingeben.',true);return}const kind=edgeTool,f={id:uid(),name:kind==='fillet'?'Verrundung':'Fase',op:kind,amount,edges:structuredClone(edgeSelection)},candidate=structuredClone(doc);candidate.features.push(f);const before=JSON.stringify(doc);edgeApplying=true;try{const result=await (await request('/build',JSON.stringify(candidate))).json();if(JSON.stringify(doc)!==before)throw Error('Modell wurde zwischenzeitlich geändert. Bitte erneut anwenden.');mutate(()=>{doc=candidate;selected=f.id;selectedKind='feature';edgeTool=null;edgeSelection=[];hoverEdge=null});acceptBuiltResult(result);status('Kantenbearbeitung erstellt. Maß rechts weiterhin editierbar.')}catch(e){status(e.message,true)}finally{edgeApplying=false;render()}}
 $('filletTool').onclick=()=>startEdgeTool('fillet');$('chamferTool').onclick=()=>startEdgeTool('chamfer');
 
-async function request(path,snapshot){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});if(!r.ok){const x=await r.json();throw Error(x.error||'Berechnung fehlgeschlagen')}return r}
+async function fetchWithProgress(path,options){
+ const id=crypto.randomUUID(), label=document.createTextNode('');
+ $('status').after(label);
+ let done=false;
+ async function poll(){
+  try{
+   const stage=await (await fetch('/progress/'+id,{cache:'no-store'})).json();
+   if(stage)label.textContent=stage.phase==='preview'?' · 3D-Vorschau wird erstellt …':
+    ' · Berechne '+featureLabel(stage,stage.ordinal)+' ('+stage.index+'/'+stage.total+')';
+  }catch{/* Progress is optional when a request is interrupted. */}
+  if(!done)timer=setTimeout(poll,300);
+ }
+ let timer=setTimeout(poll,300);
+ try{return await fetch(path,{...options,headers:{...options.headers,'X-CAD-Progress':id}});}
+ finally{done=true;clearTimeout(timer);label.remove();}
+}
+async function request(path,snapshot){const r=await fetchWithProgress(path,{method:'POST',headers:{'Content-Type':'application/json'},body:snapshot});if(!r.ok){const x=await r.json();throw Error(x.error||'Berechnung fehlgeschlagen')}return r}
 function autoUpdate(){if(busy){pending=true;return}return update()}
 async function update(){if(busy)return false;busy=true;render();status('Open Cascade berechnet …');const snapshot=JSON.stringify(doc);try{const r=await request('/build',snapshot),result=await r.json();mesh=result;dirty=JSON.stringify(doc)!==snapshot;if(!dirty){doc=result.document;stash();}lastError='';syncContext();if(selectedFace&&!mesh.faces.some(f=>f.key===selectedFace))selectedFace=null;$('stats').textContent=mesh.vertices.length?`Gültiger Körper · ${mesh.volume.toFixed(2)} mm³ · ${mesh.faces.filter(f=>f.selectable).length} ebene referenzierbare Flächen`:'Noch kein Volumenkörper · Skizze erstellen und aufpolstern';status(dirty?'Weitere Änderungen offen.':'Aktuell · Referenzen aufgelöst.');return !dirty}catch(e){lastError=e.message;dirty=true;status(e.message,true);return false}finally{busy=false;render();if(pending){pending=false;setTimeout(autoUpdate,0)}}}
 function download(data,name,type){const url=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500)}

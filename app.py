@@ -58,6 +58,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self.check_origin();path=urlsplit(self.path).path
+            if path.startswith("/progress/"):
+                return self.json_reply(self.server.progress.get(path.removeprefix("/progress/")))
             if path=="/session":
                 return self.json_reply({"token":self.server.token,"default_project":"default","version":"0.23-mcp"})
             if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})
@@ -79,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:self.error_reply(exc)
 
     def do_POST(self):
+        progress_token = None
         try:
             self.check_origin();path=urlsplit(self.path).path
             size=int(self.headers.get("Content-Length","0"))
@@ -86,6 +89,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/api","/mcp/start","/mcp/stop"):
                 if not secrets.compare_digest(self.headers.get("X-MetricCAD-Token",""),self.server.token):
                     raise CommandError("unauthorized","CAD-Verbindung nicht authentifiziert. Verbindung neu laden.")
+            request_id = self.headers.get("X-CAD-Progress", "")
+            if re.fullmatch(r"[0-9a-f-]{36}", request_id):
+                progress_token = engine.build_progress.set(lambda stage: self.server.progress.update({request_id: stage}))
             payload=json.loads(self.rfile.read(size),parse_constant=lambda v: (_ for _ in ()).throw(ValueError("Nicht endliche JSON-Zahl: "+v)))
             if path in ("/mcp/start","/mcp/stop"):
                 if payload!={}:raise CommandError("invalid_request","MCP-Steuerung erwartet ein leeres Objekt")
@@ -117,6 +123,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(target.read_bytes(),"model/stl" if path=="/stl" else "application/step")
         except Exception as exc:self.error_reply(exc)
 
+        finally:
+            if progress_token is not None:
+                engine.build_progress.reset(progress_token)
+                self.server.progress.pop(request_id, None)
+
     def log_message(self,*args):pass
 
 
@@ -144,6 +155,7 @@ class CADServer(ThreadingHTTPServer):
     daemon_threads=True
 
     def __init__(self,directory,port,mcp_port):
+        self.progress = {}
         self.service=CADService(directory)
         self.mcp_port=mcp_port
         self.mcp_process=None

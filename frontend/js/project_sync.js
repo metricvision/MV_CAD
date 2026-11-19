@@ -56,7 +56,8 @@
     if (payload !== undefined) Object.assign(options, {
       method:'POST', headers:{'Content-Type':'application/json', 'X-MetricCAD-Token':token}, body:JSON.stringify(payload)
     });
-    const response = await fetch(path, options);
+    const tracked = ['get_project_view','replace_document','create_project','undo','redo'].includes(payload?.action);
+    const response = await (tracked ? fetchWithProgress : fetch)(path, options);
     if (response.status === 403 && !retried) { await session(); return request(path,payload,timeout,true); }
     const result = await response.json();
     if (!response.ok) { const error = Error(result.error || 'CAD-Anfrage fehlgeschlagen.'); error.details = result.details; throw error; }
@@ -68,7 +69,7 @@
     const badge = $('sharedProjectState');
     badge.className = conflict || errorText ? 'sync-error' : '';
     badge.textContent = conflict ? 'Gleichzeitige Änderung erkannt · dein Entwurf bleibt erhalten' :
-      errorText || (!ready ? 'Projekt wird geladen …' : saving ? 'Wird gespeichert …' :
+      errorText || (!ready || loading ? 'Projekt wird geladen …' : saving ? 'Wird gespeichert …' :
         unsaved() ? 'Lokaler Entwurf · noch nicht übernommen' : 'Synchron · Stand ' + project.revision + (project.pending_sketch ? ' · Skizzenbearbeitung' : ''));
     for (const id of ['sharedProjectReload', 'sharedProjectFork', 'sharedProjectBackup']) $(id).hidden = !conflict && !errorText;
     $('sharedProjectSelect').disabled = !ready || loading || !!saving || busy || geometrySaving;
@@ -125,10 +126,24 @@
     } finally { applying = false; }
   }
 
-  async function loadProject(id, reset = true) {
-    loading=true;render();
-    try { receive(await api('get_project_view',{project_id:id}), reset); await refreshList(); }
-    finally { loading=false;render(); }
+  window.addEventListener('keydown', e=>{
+    if(document.body.inert){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
+
+  async function loadProject(target, saveFirst=false) {
+    if(document.body.inert)return;
+    document.body.inert=true;
+    try {
+      if(saveFirst && !(await flush()))return;
+      loading=true;render();
+      const id=typeof target==='function' ? (await target()).project.id : target;
+      receive(await api('get_project_view',{project_id:id}),true);
+      await refreshList();
+    } finally {
+      loading=false;document.body.inert=false;
+      if(project)$('sharedProjectSelect').value=project.id;
+      render();
+    }
   }
 
   function changed() {
@@ -173,7 +188,7 @@
       const result=await api('get_project',{project_id:id,include_document:false});
       if(result.project.revision!==project.revision) {
         const full=await api('get_project_view',{project_id:id});
-        if(project.id===id && snapshot()===before && !editing() && !selecting() && !saving) {
+        if(!document.body.inert && project.id===id && snapshot()===before && !editing() && !selecting() && !saving) {
           receive(full);status('Projekt aktualisiert · '+full.project.last_action);
         }
       }
@@ -210,22 +225,20 @@
 
   $('sharedProjectSelect').onchange=async e=>{
     const id=e.target.value;
-    if(editing()||!(await flush())) {e.target.value=project.id;return;}
-    try{await loadProject(id);}catch(error){errorText=error.message;showState();}
+    if(editing()) {e.target.value=project.id;return;}
+    try{await loadProject(id,true);}catch(error){errorText=error.message;showState();}
   };
   $('new').onclick=async()=>{
-    if(editing()||!(await flush()))return;
+    if(editing())return;
     const name=prompt('Projektname','Neues Projekt');if(!name)return;
-    try{const r=await api('create_project',{name});await loadProject(r.project.id);}catch(error){status(error.message,true);}
+    try{await loadProject(()=>api('create_project',{name}),true);}catch(error){status(error.message,true);}
   };
   $('open').onclick=()=>{if(!editing())$('file').click();};
   $('file').onchange=async e=>{
     const file=e.target.files[0];e.target.value='';if(!file||editing())return;
-    if(!(await flush()))return;
     try{
       if(file.size>4_000_000)throw Error('Projektdatei größer als 4 MB.');
-      const r=await api('create_project',{name:file.name.replace(/\.json$/i,''),document:JSON.parse(await file.text())});
-      await loadProject(r.project.id);
+      await loadProject(async()=>api('create_project',{name:file.name.replace(/\.json$/i,''),document:JSON.parse(await file.text())}),true);
     }catch(error){status(error.message,true);}
   };
   $('save').onclick=async()=>{
@@ -240,7 +253,7 @@
   };
   $('sharedProjectFork').onclick=async()=>{
     if(editing()||saving)return;
-    try{const r=await api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc)});await loadProject(r.project.id);}
+    try{await loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc)}));}
     catch(error){errorText=error.message;showState();}
   };
 

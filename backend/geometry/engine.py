@@ -1,4 +1,5 @@
 """MiniCAD 0.2. BRep history and conservative semantic planar-face references."""
+from contextvars import ContextVar
 import copy
 import math
 import cadquery as cq
@@ -229,6 +230,26 @@ def reference_body(body,registry):
     return {'vertices':vertices,'triangles':triangles,'edges':edges}
 
 _EXTERNAL_CACHE=[]
+_VERTEX_FACE_CACHE=[]
+
+def vertex_face_names(body,registry):
+    for cached_body,cached_registry,index in _VERTEX_FACE_CACHE:
+        if cached_body is body and cached_registry is registry:
+            return index
+    # CadQuery shape keys use OCCT topological identity, including location.
+    # Multiple names for one face retain the last unambiguous registry entry.
+    face_names={entry['faces'][0]:name for name,entry in registry.items() if len(entry['faces'])==1}
+    index={}
+    for face in body.Faces():
+        if face in face_names:
+            for vertex in face.Vertices():
+                index.setdefault(vertex,[]).append(face_names[face])
+    for names in index.values():
+        names.sort()
+    _VERTEX_FACE_CACHE.append((body,registry,index))
+    del _VERTEX_FACE_CACHE[:-8]
+    return index
+
 
 def external_support(support,body,registry):
     if body is None:return {**support,'external':[],'referenceBody':reference_body(None,{})}
@@ -236,11 +257,7 @@ def external_support(support,body,registry):
     for old_body,old_registry,old_frame,data in _EXTERNAL_CACHE:
         if old_body is body and old_registry is registry and old_frame==frame:return {**support,**data}
     # Vertex identities come from incident semantic faces, not endpoint indices.
-    face_names=[]
-    for face in body.Faces():
-        names=[k for k,v in registry.items() if len(v['faces'])==1 and face.isSame(v['faces'][0])]
-        if names:face_names.append((face,names[-1]))
-    def vertex_names(vertex):return sorted(k for face,k in face_names if any(vertex.isSame(v) for v in face.Vertices()))
+    names_by_vertex=vertex_face_names(body,registry)
     def project(p):return local(p,frame)
     def depth(p):return (p-vec(frame['o'])).dot(vec(frame['n']))
     for item in edge_catalog(body,registry):
@@ -256,7 +273,7 @@ def external_support(support,body,registry):
         elif typ=='LINE':
             ends=edge.Vertices()
             if len(ends)!=2:continue
-            keyed=[(vertex_names(v),v.Center()) for v in ends]
+            keyed=[(names_by_vertex.get(v,[]),v.Center()) for v in ends]
             if not keyed[0][0] or not keyed[1][0] or keyed[0][0]==keyed[1][0]:continue
             keyed.sort(key=lambda v:v[0]);ps=[project(v) for _,v in keyed]
             if math.dist(*ps)<1e-7:continue
@@ -587,11 +604,12 @@ def treatment(body,registry,f):
 
 # Only the most recent feature chain is retained (maximum 50 stages).
 # Shape snapshots are reused, never edited in place by the application.
+build_progress = ContextVar("build_progress", default=None)
 _STAGES=[]
 LAST_REBUILT=0
 
 def clear_cache():
-    _STAGES.clear();_EXTERNAL_CACHE.clear()
+    _STAGES.clear();_EXTERNAL_CACHE.clear();_VERTEX_FACE_CACHE.clear()
 
 def signature(feature):
     import json
@@ -611,7 +629,11 @@ def build_state(raw):
         cached=_STAGES[common-1];body=cached['body'];registry=cached['registry'];layouts=copy.deepcopy(cached['layouts'])
         for i in range(common):doc['features'][i]=copy.deepcopy(_STAGES[i]['feature'])
     del _STAGES[common:]
-    for f in doc['features'][common:]:
+    report = build_progress.get()
+    for index, f in enumerate(doc['features'][common:], common + 1):
+        if report:
+            ordinal = sum(item['op'] == f['op'] for item in doc['features'][:index])
+            report({'op': f['op'], 'ordinal': ordinal, 'index': index, 'total': len(doc['features'])})
         raw_signature=signature(f);LAST_REBUILT+=1
         try:
             if f['op']=='helix':
@@ -686,6 +708,8 @@ def drag_sketch(payload):
 
 def preview(raw):
     body,registry,layouts,doc=build_state(raw)
+    if report := build_progress.get():
+        report({"phase": "preview"})
     pathpoints=[p for l in layouts if l.get('helix') for p in l['points']]
     pathbounds=[min(p[i] for p in pathpoints) if side==0 else max(p[i] for p in pathpoints) for i in range(3) for side in (0,1)] if pathpoints else [-50,50,-50,50,-50,50]
     if body is None:return {'document':doc,'vertices':[],'triangles':[],'triangleFaces':[],'faces':[],'edges':[],'layouts':layouts,'volume':0,'bounds':pathbounds}
