@@ -65,7 +65,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})
             if path=="/mcp/status":return self.json_reply(self.server.mcp_status())
             routes={"/":"frontend/index.html","/index.html":"frontend/index.html","/assembly":"frontend/assembly.html","/assembly.html":"frontend/assembly.html",
-                    "/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
+                    "/project_files.js":"frontend/js/project_files.js","/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
                     "/part_studio.js":"frontend/js/part_studio.js","/part_studio.css":"frontend/css/part_studio.css"}
             if path in routes:
                 name=routes[path];kind={"html":"text/html; charset=utf-8","js":"application/javascript; charset=utf-8","css":"text/css; charset=utf-8"}[name.rsplit(".",1)[1]]

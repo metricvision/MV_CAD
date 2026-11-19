@@ -24,9 +24,9 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   const native=JSON.parse(fs.readFileSync(path.join(root,'examples','plate_with_holes.json'),'utf8'));
   let project=(await api('create_project',{name:'UI state test',document:native})).project;
   const console_=new VirtualConsole();console_.on('jsdomError',e=>errors.push(e.stack||e.message));
-  async function load(){
+  async function load(route='/?project='+project.id){
     if(dom)dom.window.close();
-    dom=await JSDOM.fromURL(url+'/?project='+project.id,{resources:'usable',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console_,beforeParse(w){
+    dom=await JSDOM.fromURL(url+route,{resources:'usable',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console_,beforeParse(w){
       w.structuredClone=structuredClone;w.fetch=(p,o)=>fetch(new URL(p,url),o);w.AbortSignal=AbortSignal;
       w.confirm=()=>true;w.prompt=()=> 'Neues Testprojekt';
       w.ResizeObserver=class{constructor(callback){this.callback=callback;}observe(){setTimeout(()=>this.callback([]),0);}disconnect(){}};
@@ -34,7 +34,8 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
       w.HTMLElement.prototype.setPointerCapture=function(){};w.HTMLElement.prototype.releasePointerCapture=function(){};
       const canvases=new WeakMap();w.HTMLCanvasElement.prototype.getContext=function(type){if(type!=='2d')return null;if(!canvases.has(this))canvases.set(this,createCanvas(1200,900));return canvases.get(this).getContext('2d');};
     }});
-    await waitFor(()=>dom.window.metriccadSync?.project && !dom.window.eval('busy'),'initial project');
+    if(route==='/assembly')await waitFor(()=>dom.window.document.getElementById('saveAs')?.onclick,'assembly loaded');
+    else await waitFor(()=>dom.window.metriccadSync?.project && !dom.window.eval('busy'),'initial project');
   }
   await load();let w=dom.window;
   assert.equal(w.document.getElementById('save').disabled,false);
@@ -90,6 +91,46 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aktiv · lokal','MCP restart');
   const healthUrl=w.document.getElementById('mcpUrl').value.replace(/\/mcp$/,'/health');
   assert.equal((await fetch(healthUrl)).ok,true);
+  // Exercise the real handlers with in-memory file handles in place of OS dialogs.
+  for(const route of ['/','/assembly']){
+    await load(route);w=dom.window;
+    const key=route==='/'?'features':'instances';
+    assert.equal(w.eval('doc')[key].length,0);
+    const input=route==='/'?native:w.eval('demoDocument()');
+    let picks=0,choice='cancel',failWrite=false;
+    function fileHandle(name,contents=''){
+      let modified=1;
+      return {name,getFile:async()=>({name,size:contents.length,lastModified:modified,text:async()=>contents}),
+        createWritable:async()=>({write:async text=>{if(failWrite)throw Error('Schreibfehler');contents=text;},close:async()=>{modified++;},abort:async()=>{}})};
+    }
+    let source=fileHandle('Modell.json',JSON.stringify(input)),destination=fileHandle('Kopie.json');
+    w.showOpenFilePicker=async()=>[source];w.showSaveFilePicker=async()=>{picks++;return destination;};
+    w.HTMLDialogElement.prototype.showModal=function(){this.returnValue=choice;this.onclose();};
+    const click=id=>w.document.getElementById(id).onclick();
+    if(route==='/'){
+      await w.eval("plane='XZ';newSketch()");
+      const ok=await w.eval("commitGeometry({id:'first-rectangle',type:'rect',x:0,y:0,a:20,b:10,angle:0},null,{horizontal:true})");
+      assert.equal(ok,true,w.document.getElementById('status').textContent);
+      assert.equal(await w.metriccadSync.flush(),true);
+      assert.equal(w.metriccadSync.project.document.features[0].support.plane,'XZ');
+      await click('padTool');
+      assert.ok(w.eval('mesh.volume')>0);
+      assert.equal(await w.metriccadSync.flush(),true);
+    }
+    await click('save');await click('save');assert.equal(picks,1);
+    await click('open');assert.equal(w.eval('doc')[key].length,input[key].length);
+    w.eval("doc.testNote='Bearbeitung'");await click('save');assert.equal(picks,1);
+    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,'Bearbeitung');
+    await click('saveAs');assert.equal(picks,2);w.eval("doc.testNote='Kopie'");
+    await click('new');assert.equal(w.eval('doc.testNote'),'Kopie'); // cancel
+    choice='save';failWrite=true;await click('new');assert.equal(w.eval('doc.testNote'),'Kopie');
+    failWrite=false;await click('new');assert.equal(w.eval('doc')[key].length,0);
+    assert.equal(JSON.parse(await (await destination.getFile()).text()).testNote,'Kopie');
+    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,'Bearbeitung');
+    source=fileHandle('Defekt.json','null');await click('open');assert.equal(w.eval('doc')[key].length,0);
+    w.eval("doc.testNote='Verwerfen'");choice='discard';await click('new');assert.equal(w.eval('doc.testNote'),undefined);
+  }
+  assert.deepEqual(errors,[]);
   dom.window.close();dom=null;
   const exited=new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(Error('CAD shutdown timed out')),10000);
@@ -99,7 +140,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   assert.equal(await exited,0);
   await assert.rejects(fetch(healthUrl));
   assert.equal(fs.existsSync(path.join(directory,'connection.json')),false);
-  console.log('PASS: MCP start/stop/status/copy/reload/restart/app shutdown, actual frontend scripts, HTTP service, live updates, dimension dialog, deferred rebuild, conflict preservation, shared undo and reload (DOM environment; no WebGL).');
+  console.log('PASS: MCP start/stop/status/copy/reload/restart/app shutdown, file workflows in both workspaces, actual frontend scripts, HTTP service, live updates, dimension dialog, deferred rebuild, conflict preservation, shared undo and reload (DOM environment; no WebGL).');
 })().catch(e=>{console.error(e);if(dom)console.error('UI STATE',dom.window.document.getElementById('sharedProjectState')?.textContent,dom.window.document.getElementById('status')?.textContent);process.exitCode=1;}).finally(async()=>{
   if(dom)dom.window.close();server.kill('SIGTERM');
   await new Promise(resolve=>{if(server.exitCode!==null)return resolve();server.once('exit',resolve);setTimeout(resolve,3000);});

@@ -7,10 +7,10 @@
   if (assemblyEditToken) return; // Assembly editor tabs use their explicit hand-off.
   let token = null, project = null, acknowledged = null;
   let applying = false, saving = null, loading = false, conflict = false, ready = false;
-  let timer = null, listCounter = 0, polling = false, errorText = '';
+  let timer = null, polling = false, errorText = '';
   const bar = document.createElement('div');
   bar.id = 'sharedProjectBar';
-  bar.innerHTML = '<label>Projekt <select id="sharedProjectSelect" aria-label="Projekt auswählen"></select></label><span id="sharedProjectState" role="status">Projekt wird geladen …</span><button id="sharedProjectReload" hidden>Serverstand laden</button><button id="sharedProjectFork" hidden>Entwurf als neues Projekt</button><button id="sharedProjectBackup" hidden>Entwurf herunterladen</button>';
+  bar.innerHTML = '<button id="sharedProjectList">Arbeitsprojekte laden</button><select id="sharedProjectSelect" aria-label="Arbeitsprojekt auswählen" hidden></select><span id="sharedProjectState" role="status">Projekt wird geladen …</span><button id="sharedProjectReload" hidden>Serverstand laden</button><button id="sharedProjectFork" hidden>Entwurf als neues Projekt</button>';
   document.querySelector('main').before(bar);
   bar.insertAdjacentHTML('beforeend','<button id="mcpToggle" disabled>MCP starten</button><span id="mcpState" role="status">MCP wird geprüft …</span><input id="mcpUrl" aria-label="MCP-Adresse" title="Streamable HTTP · nur auf diesem Rechner erreichbar" readonly hidden><button id="mcpCopy" hidden>Adresse kopieren</button>');
   let mcpRunning=false, mcpBusy=false;
@@ -69,21 +69,22 @@
     const badge = $('sharedProjectState');
     badge.className = conflict || errorText ? 'sync-error' : '';
     badge.textContent = conflict ? 'Gleichzeitige Änderung erkannt · dein Entwurf bleibt erhalten' :
-      errorText || (!ready || loading ? 'Projekt wird geladen …' : saving ? 'Wird gespeichert …' :
-        unsaved() ? 'Lokaler Entwurf · noch nicht übernommen' : 'Synchron · Stand ' + project.revision + (project.pending_sketch ? ' · Skizzenbearbeitung' : ''));
-    for (const id of ['sharedProjectReload', 'sharedProjectFork', 'sharedProjectBackup']) $(id).hidden = !conflict && !errorText;
+      errorText || (!ready || loading ? 'Projekt wird geladen …' : saving ? 'Arbeitsstand wird synchronisiert …' :
+        unsaved() ? 'Lokaler Entwurf · noch nicht übernommen' : !project.id ? 'Neues Teil' : 'Synchron · Stand ' + project.revision + (project.pending_sketch ? ' · Skizzenbearbeitung' : ''));
+    for (const id of ['sharedProjectReload', 'sharedProjectFork']) $(id).hidden = !conflict && !errorText;
     $('sharedProjectSelect').disabled = !ready || loading || !!saving || busy || geometrySaving;
   }
 
   async function refreshList() {
     const result = await api('list_projects');
     const select = $('sharedProjectSelect'), previous = project?.id;
-    select.replaceChildren();
+    select.replaceChildren(new Option('Unbenannt', ''));
     for (const item of result.projects) {
       const option = document.createElement('option'); option.value = item.id; option.textContent = item.name;
       select.append(option);
     }
-    if (previous) select.value = previous;
+    select.value = previous || '';
+    select.hidden=false;
   }
 
   function resetTools() {
@@ -121,27 +122,30 @@
         zoom *= view.scale / scale2(); const b=sketchBounds();
         pan=[((b[0]+b[1])/2-view.center[0])*view.scale,(view.center[1]-(b[2]+b[3])/2)*view.scale];
       }
-      window.history.replaceState(null,'','/?project='+encodeURIComponent(project.id));
       stash(); if (reset) fit(); render(); showState();
     } finally { applying = false; }
   }
 
-  window.addEventListener('keydown', e=>{
-    if(document.body.inert){e.preventDefault();e.stopImmediatePropagation();}
-  },true);
-
-  async function loadProject(target, saveFirst=false) {
-    if(document.body.inert)return;
-    document.body.inert=true;
+  async function loadProject(target) {
+    if(loading)return false;
+    const alreadyLocked=document.body.inert;
+    document.body.inert=true;loading=true;
     try {
-      if(saveFirst && !(await flush()))return;
-      loading=true;render();
+      clearTimeout(timer);
+      if(saving)await saving;
       const id=typeof target==='function' ? (await target()).project.id : target;
-      receive(await api('get_project_view',{project_id:id}),true);
-      await refreshList();
+      if(id)receive(await api('get_project_view',{project_id:id}),true);
+      else {
+        const document=fresh();
+        const preview={document,vertices:[],triangles:[],triangleFaces:[],faces:[],edges:[],layouts:[],
+          volume:0,bounds:[-50,50,-50,50,-50,50]};
+        collapsedNodes.clear();
+        receive({project:{id:null,name:'Unbenannt',revision:0,document},preview},true);
+      }
+      return true;
     } finally {
-      loading=false;document.body.inert=false;
-      if(project)$('sharedProjectSelect').value=project.id;
+      loading=false;document.body.inert=alreadyLocked;
+      if(project)$('sharedProjectSelect').value=project.id||'';
       render();
     }
   }
@@ -165,6 +169,7 @@
     const annotationOnly=!needsFinalize() && dimensionLayoutKey(old)===dimensionLayoutKey(candidate);
     saving=(async()=>{
       try {
+        if(!project.id)project=(await api('create_project',{name:project.name})).project;
         const result=await api('replace_document',{project_id:project.id,expected_revision:revision,document:candidate,
           sketch_id:annotationOnly?null:sketchID,annotation_only:annotationOnly});
         if(snapshot()===sent && !editing()) receive(result);
@@ -180,10 +185,11 @@
   }
 
   async function poll() {
-    if (polling || loading || !ready || conflict || editing() || selecting() || saving) return;
+    if (polling || document.body.inert || loading || !ready || conflict || editing() || selecting() || saving) return;
     polling=true;
     try {
       if(unsaved()) { await flush();return; }
+      if(!project.id)return;
       const before=snapshot(), id=project.id;
       const result=await api('get_project',{project_id:id,include_document:false});
       if(result.project.revision!==project.revision) {
@@ -192,7 +198,6 @@
           receive(full);status('Projekt aktualisiert · '+full.project.last_action);
         }
       }
-      if(++listCounter%5===0) await refreshList();
       errorText='';showState();
     } catch(error) { errorText='Verbindung unterbrochen: '+error.message;showState(); }
     finally { polling=false; }
@@ -223,45 +228,41 @@
   };
   $('undo').onclick=()=>undo();$('redo').onclick=()=>undo(true);
 
+  const files=bindProjectFiles({
+    defaultName:'MetricCAD-Teil.json',blocked:()=>!ready||loading||editing(),
+    async replace(value,name) {
+      if(value!==null && ![1,2].includes(value?.version))throw Error('Bitte eine Bauteil-JSON wählen.');
+      if(value?.format==='MetricCAD-assembly')throw Error('Baugruppen bitte in der Baugruppenansicht öffnen.');
+      const ok=await loadProject(value===null ? null : ()=>api('create_project',{name:name.replace(/\.json$/i,''),document:value}));
+      if(ok)window.history.replaceState(null,'','/');
+      return ok;
+    }
+  });
+  $('sharedProjectList').onclick=()=>refreshList().catch(error=>status(error.message,true));
   $('sharedProjectSelect').onchange=async e=>{
     const id=e.target.value;
-    if(editing()) {e.target.value=project.id;return;}
-    try{await loadProject(id,true);}catch(error){errorText=error.message;showState();}
+    e.target.value=project.id||'';
+    await files.switchTo(async()=>{
+      if(!await loadProject(id))return false;
+      window.history.replaceState(null,'',id?'/?project='+encodeURIComponent(id):'/');
+      return true;
+    });
   };
-  $('new').onclick=async()=>{
-    if(editing())return;
-    const name=prompt('Projektname','Neues Projekt');if(!name)return;
-    try{await loadProject(()=>api('create_project',{name}),true);}catch(error){status(error.message,true);}
-  };
-  $('open').onclick=()=>{if(!editing())$('file').click();};
-  $('file').onchange=async e=>{
-    const file=e.target.files[0];e.target.value='';if(!file||editing())return;
-    try{
-      if(file.size>4_000_000)throw Error('Projektdatei größer als 4 MB.');
-      await loadProject(async()=>api('create_project',{name:file.name.replace(/\.json$/i,''),document:JSON.parse(await file.text())}),true);
-    }catch(error){status(error.message,true);}
-  };
-  $('save').onclick=async()=>{
-    if(!conflict)await flush();
-    download(JSON.stringify(doc,null,2),'MetricCAD.json','application/json');
-  };
-  $('sharedProjectBackup').onclick=()=>download(JSON.stringify(doc,null,2),'MetricCAD-Entwurf.json','application/json');
   $('sharedProjectReload').onclick=async()=>{
     if(editing()||saving)return;
-    if(unsaved()&&!confirm('Lokalen Entwurf verwerfen und den Serverstand laden? Du kannst den Entwurf zuvor herunterladen.'))return;
-    try{await loadProject(project?.id||'default');}catch(error){errorText=error.message;showState();}
+    if(unsaved()&&!confirm('Lokalen Entwurf verwerfen und den Serverstand laden? Du kannst ihn zuvor mit „Speichern unter …“ sichern.'))return;
+    try{await loadProject(project?.id);}catch(error){errorText=error.message;showState();}
   };
   $('sharedProjectFork').onclick=async()=>{
     if(editing()||saving)return;
-    try{await loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc)}));}
+    try{await files.switchTo(()=>loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc)})));}
     catch(error){errorText=error.message;showState();}
   };
 
   window.metriccadSync={changed,flush,api,get project(){return project;},get conflict(){return conflict;}};
-  window.addEventListener('beforeunload',e=>{if(unsaved()||saving){e.preventDefault();e.returnValue='';}});
   (async()=>{
     busy=true;render();
-    try{await session();const id=new URLSearchParams(location.search).get('project')||'default';await loadProject(id);}
+    try{await session();await loadProject(new URLSearchParams(location.search).get('project'));files.markClean();}
     catch(error){errorText=error.message;showState();}
     finally{busy=false;render();setInterval(poll,1000);updateMCP();setInterval(updateMCP,3000);}
   })();
