@@ -9,6 +9,14 @@ from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse, BRepAlgoAPI_Cut
 
 class ModelError(ValueError): pass
 
+class FeatureBuildError(ModelError):
+    def __init__(self, message, document, index, layout):
+        super().__init__(message)
+        self.document = document
+        self.index = index
+        self.layout = layout
+
+
 def num(v, name='Maß', positive=False):
     if isinstance(v,bool): raise ModelError(name+': Zahl erwartet')
     try: n=float(v)
@@ -683,8 +691,9 @@ def build_state(raw):
                 registry=propagate({**registry,**newreg},op,body)
                 registry=name_split_faces(body,registry,f['id'])
             store_stage(f,raw_signature,body,registry,layouts)
-        except (ModelError,KeyError,TypeError,ValueError) as e:
-            raise ModelError(str(f.get('name','Skizze'))+': '+str(e)) from e
+        except (KeyError, TypeError, ValueError, RuntimeError) as e:
+            layout = layouts[-1] if layouts and layouts[-1]['id'] == f['id'] else None
+            raise FeatureBuildError(f"{f.get('name','Skizze')}: {e}", doc, index-1, layout) from e
     return body,registry,layouts,doc
 
 def build(doc):
@@ -705,6 +714,19 @@ def drag_sketch(payload):
     sketches.solve(f,support)
     constraints=sketches.solve(f,support,{'element':payload.get('element'),'point':payload.get('point'),'delta':payload.get('delta')})
     return {'feature':f,'constraints':constraints}
+
+def editor_preview(raw):
+    """Keep the full feature tree editable while displaying its last valid solid."""
+    try:
+        return preview(raw)
+    except FeatureBuildError as error:
+        doc = error.document
+        result = preview({"version": 2, "features": doc["features"][:error.index]})
+        result["document"] = doc
+        result["failure"] = {"id": doc["features"][error.index]["id"], "message": str(error)}
+        if error.layout is not None:
+            result["layouts"].append(error.layout)
+        return result
 
 def preview(raw):
     body,registry,layouts,doc=build_state(raw)

@@ -110,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
                             return self.reply(target.read_bytes(),"application/step")
                     if path not in ("/assembly/build","/assembly/solve"):raise CommandError("unknown_command","Unbekannter Befehl")
                     return self.json_reply(assembly.prepare(payload,include_mesh=path=="/assembly/build"))
-                handlers={"/validate":engine.validate,"/build":engine.preview,"/sketch-solve":engine.solve_sketch,"/sketch-drag":engine.drag_sketch}
+                handlers={"/validate":engine.validate,"/build":engine.preview,"/build-view":engine.editor_preview,"/sketch-solve":engine.solve_sketch,"/sketch-drag":engine.drag_sketch}
                 if path in handlers:return self.json_reply(handlers[path](payload))
                 if path not in ("/step","/stl"):raise CommandError("unknown_command","Unbekannter Befehl")
                 body,_=engine.build(payload)

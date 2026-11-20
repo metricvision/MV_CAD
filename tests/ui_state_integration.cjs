@@ -91,6 +91,32 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aktiv · lokal','MCP restart');
   const healthUrl=w.document.getElementById('mcpUrl').value.replace(/\/mcp$/,'/health');
   assert.equal((await fetch(healthUrl)).ok,true);
+  // Shrinking the base moves an otherwise valid pocket outside the solid.
+  const pocket={id:'cut',name:'Bohrung',shape:'multi',op:'pocket',depth:4,reverse:true,
+    support:{plane:'XY'},geometry:[{id:'hole',type:'circle',x:30,y:0,a:4}],dimensions:[],relations:[]};
+  const next={...pocket,id:'later',name:'Folgeskizze',op:'sketch'};
+  project=(await api('create_project',{name:'Reparatur',document:{version:2,features:[native.features[0],pocket,next]}})).project;
+  await load();w=dom.window;
+  const node=label=>w.document.querySelector('#tree button[aria-label="'+label+'"]');
+  node('Grundplatte').click();await w.document.getElementById('editSketchTool').onclick();
+  w.eval('openDimensionEditor(cur().dimensions.find(d=>d.id==="width"))');
+  w.document.getElementById('dimValue').value='20';await w.document.getElementById('dimApply').onclick();
+  await w.document.getElementById('view3').onclick();
+  await waitFor(()=>w.eval('mode==="3d" && mesh.failure?.id==="cut"'),'leave sketch with a broken pocket');
+  assert.equal(await w.metriccadSync.flush(),true);
+  assert.equal(w.metriccadSync.project.pending_sketch,null);
+  assert.ok(Math.abs(w.eval('mesh.volume')-20*50*8)<1e-5);
+  assert.equal(node('Bohrung').lastChild.style.color,'rgb(255, 128, 128)');
+  assert.equal(node('Tasche 1').lastChild.style.color,'rgb(255, 128, 128)');
+  assert.equal(node('Folgeskizze').lastChild.style.color,'rgb(135, 147, 159)');
+  await load();w=dom.window;assert.equal(w.eval('mesh.failure.id'),'cut');
+  node('Bohrung').click();await w.document.getElementById('editSketchTool').onclick();
+  assert.equal(w.eval('context.id'),'cut');
+  assert.equal(await w.eval("commitGeometry({...cur().geometry[0],x:0},'hole')"),true);
+  await w.document.getElementById('view3').onclick();
+  await waitFor(()=>w.eval('mode==="3d" && !mesh.failure && mesh.volume<8000'),'repair pocket');
+  assert.equal(node('Folgeskizze').disabled,false);
+  assert.equal(node('Tasche 1').lastChild.style.color,'');
   // Exercise the real handlers with in-memory file handles in place of OS dialogs.
   for(const route of ['/','/assembly']){
     await load(route);w=dom.window;

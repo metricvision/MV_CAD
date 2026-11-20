@@ -118,10 +118,10 @@ class CADService:
         atomic_write(self._path(r["id"]), json_bytes(r))
         self._records[r["id"]] = r
 
-    def _new(self, name, document, project_id=None):
+    def _new(self, name, document, project_id=None, allow_partial=False):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
             raise CommandError("invalid_name", "Projektname muss 1 bis 200 Zeichen enthalten.")
-        preview = engine.preview(document)
+        preview = engine.editor_preview(document) if allow_partial else engine.preview(document)
         self._arrange(preview["document"], preview)
         r = {"id": project_id or uuid.uuid4().hex, "name": name.strip(), "revision": 0,
              "document": preview["document"], "history": [], "future": [], "pending_sketch": None,
@@ -158,7 +158,7 @@ class CADService:
             c = l.get("constraints")
             if c is not None:
                 states.append({"id": l["id"], "dof": c["dof"], "fully_constrained": c["fully"]})
-        return {"valid": True, "volume_mm3": preview.get("volume", 0), "bounds_mm": preview.get("bounds"),
+        return {"valid": "failure" not in preview, "volume_mm3": preview.get("volume", 0), "bounds_mm": preview.get("bounds"),
                 "solid_count": preview.get("solidCount", 0), "sketches": states,
                 "warnings": [{"code": "underconstrained_sketch", "sketch_id": s["id"], "dof": s["dof"]} for s in states if s["dof"]]}
 
@@ -190,7 +190,7 @@ class CADService:
             preview["document"] = copy.deepcopy(doc)
             preview["pendingSketch"] = r["pending_sketch"]
             return preview
-        return engine.preview(doc)
+        return engine.editor_preview(doc)
 
     def execute(self, action, arguments=None):
         args = arguments or {}
@@ -217,8 +217,8 @@ class CADService:
             except CommandError as exc: errors.append(exc.payload())
         return {"projects": result, "errors": errors}
 
-    def cmd_create_project(self, name="Neues Projekt", document=None):
-        return self._new(name, document if document is not None else fresh())
+    def cmd_create_project(self, name="Neues Projekt", document=None, allow_partial=False):
+        return self._new(name, document if document is not None else fresh(), allow_partial=allow_partial)
 
     def cmd_get_project(self, project_id="default", include_document=True):
         return {"project": self._public(self._record(project_id), include_document)}
@@ -360,7 +360,7 @@ class CADService:
             report = {"valid":False,"error":str(exc)}
         return {"project_id":project_id,"revision":r["revision"],"pending_sketch":r.get("pending_sketch"),**report}
 
-    def cmd_replace_document(self, project_id, expected_revision, document, sketch_id=None, annotation_only=False):
+    def cmd_replace_document(self, project_id, expected_revision, document, sketch_id=None, annotation_only=False, allow_partial=False):
         """Browser commit. Sketch edits may defer solid/successor rebuilds.
 
         This is intentionally not exposed as an unrestricted MCP write tool.
@@ -383,9 +383,12 @@ class CADService:
             normalized=solved["document"];pending=sketch_id
             feedback["sketch_result"] = solved
         else:
-            preview = engine.preview(document); normalized=preview["document"];pending=None
+            preview = engine.editor_preview(document) if allow_partial else engine.preview(document)
+            normalized=preview["document"];pending=None
             feedback["preview"] = preview
-            if r.get("pending_sketch"):
+            if r.get("pending_sketch") and normalized == r["document"]:
+                record_history = False
+            elif r.get("pending_sketch"):
                 try:
                     # Finishing the already-saved sketch is a rebuild, not an
                     # additional user edit. Keep undo focused on the dimension
@@ -402,10 +405,6 @@ class CADService:
         source,target=("future","history") if redo else ("history","future")
         if not r[source]: raise CommandError("history_empty","Keine weitere Änderung vorhanden.")
         saved=r[source][-1]
-        # Validate before moving history. Pending sketches remain valid editable drafts.
-        if saved.get("pending_sketch"):
-            engine.solve_sketch({"document":saved["document"],"sketch":saved["pending_sketch"]})
-        else: engine.build_state(saved["document"])
         updated=copy.deepcopy(r);updated[source].pop();updated[target]=(updated[target]+[self._snapshot(r)])[-60:]
         updated.update(copy.deepcopy(saved));updated.update(revision=r["revision"]+1,updated_at=now(),last_source="history",last_action="Wiederherstellen" if redo else "Rückgängig")
         preview = self._view(updated)

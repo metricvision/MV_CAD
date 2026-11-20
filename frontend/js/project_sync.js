@@ -171,8 +171,9 @@
       try {
         if(!project.id)project=(await api('create_project',{name:project.name})).project;
         const result=await api('replace_document',{project_id:project.id,expected_revision:revision,document:candidate,
-          sketch_id:annotationOnly?null:sketchID,annotation_only:annotationOnly});
-        if(snapshot()===sent && !editing()) receive(result);
+          sketch_id:annotationOnly?null:sketchID,annotation_only:annotationOnly,allow_partial:true});
+        const stillInSketch=!result.sketch_result || (mode==='2d' && context?.id===sketchID);
+        if(snapshot()===sent && !editing() && stillInSketch) receive(result);
         else { project=result.project;acknowledged=JSON.stringify(result.project.document); }
         errorText='';return true;
       } catch(error) {
@@ -233,7 +234,7 @@
     async replace(value,name) {
       if(value!==null && ![1,2].includes(value?.version))throw Error('Bitte eine Bauteil-JSON wählen.');
       if(value?.format==='MetricCAD-assembly')throw Error('Baugruppen bitte in der Baugruppenansicht öffnen.');
-      const ok=await loadProject(value===null ? null : ()=>api('create_project',{name:name.replace(/\.json$/i,''),document:value}));
+      const ok=await loadProject(value===null ? null : ()=>api('create_project',{name:name.replace(/\.json$/i,''),document:value,allow_partial:true}));
       if(ok)window.history.replaceState(null,'','/');
       return ok;
     }
@@ -255,7 +256,7 @@
   };
   $('sharedProjectFork').onclick=async()=>{
     if(editing()||saving)return;
-    try{await files.switchTo(()=>loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc)})));}
+    try{await files.switchTo(()=>loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc),allow_partial:true})));}
     catch(error){errorText=error.message;showState();}
   };
 
