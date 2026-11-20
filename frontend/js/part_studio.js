@@ -1,7 +1,7 @@
 
 'use strict';
 const $=id=>document.getElementById(id),uid=()=>crypto.randomUUID(),fresh=()=>({version:2,features:[]});
-let doc=fresh(),mesh=null,selected=null,selectedFace=null,plane=null,context=null,tool=null,bind=null,repair=null,mode='3d',dirty=false,busy=false,history=[],future=[],lastError='',zoom=1,pan=[0,0],yaw=-.7,pitch=.65,drag=null,hoverFace=null,pending=false;
+let doc=fresh(),mesh=null,selected=null,selectedFace=null,plane=null,context=null,tool=null,bind=null,repair=null,mode='3d',dirty=false,busy=false,history=[],future=[],lastError='',zoom=1,pan=[0,0],yaw=-.7,pitch=.65,drag=null,measuredFace=null,hoverFace=null,pending=false;
 let selectedKind='sketch',hoverPlane=null,originVisible=true,waitingPlane=false;const collapsedNodes=new Set();
 const overlay=$('overlay'),ctx=overlay.getContext('2d'),glCanvas=$('gl');let W=1,H=1,DPR=1;
 const gl=glCanvas.getContext('webgl',{antialias:true,alpha:false});
@@ -85,7 +85,7 @@ function send(vertices,kind){if(!vertices.length)return;gl.useProgram(shader);gl
 function draw3(){
  if(!gl){drawOriginPlanes();ctx.fillStyle='#ffbb9e';ctx.fillText('WebGL nicht verfügbar. Hardwarebeschleunigung im Browser aktivieren.',20,110);return}
  gl.viewport(0,0,glCanvas.width,glCanvas.height);gl.clearColor(.045,.08,.12,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);
- if(mesh?.vertices.length){const out=[],ps=screenVertices().map(clip),lights=meshLighting();mesh.triangles.forEach((t,i)=>{const fid=mesh.triangleFaces[i],face=mesh.faces[fid];let light=lights[i],color=selectedFace&&face.key===selectedFace?[.96,.67,.29]:fid===hoverFace?[.45,.84,.75]:[.23,.64,.58];color=color.map(c=>c*light);for(const vi of t)out.push(...ps[vi],...color)});send(out,gl.TRIANGLES)}
+ if(mesh?.vertices.length){const out=[],ps=screenVertices().map(clip),lights=meshLighting();mesh.triangles.forEach((t,i)=>{const fid=mesh.triangleFaces[i],face=mesh.faces[fid];let light=lights[i],color=fid===measuredFace||(selectedFace&&face.key===selectedFace)?[.96,.67,.29]:fid===hoverFace?[.45,.84,.75]:[.23,.64,.58];color=color.map(c=>c*light);for(const vi of t)out.push(...ps[vi],...color)});send(out,gl.TRIANGLES)}
  const lines=[];function line3(a,b,c){for(const p of [a,b])lines.push(...clip(project(p)),...c)}
  for(const f of doc.features.filter(f=>f.op==='sketch')){const l=layout(f);if(!l)continue;const to3=p=>add(l.frame.o,add(mul(l.frame.u,p[0]),mul(l.frame.v,p[1])));const gs=f.shape==='multi'?f.geometry:[{type:f.shape,x:l.x,y:l.y,a:f.a,b:f.b}];for(const g of gs){if(['ellipse','spline'].includes(g.type)){for(const [a,b] of curveSegments(g))line3(to3(a),to3(b),[.4,.95,.77]);}else if(g.type==='arc'){for(const [a,b] of arcSegments(g))line3(to3(a),to3(b),[.4,.95,.77]);}else if(g.type==='circle'){let prev=[g.x+g.a/2,g.y];for(let i=1;i<=64;i++){const p=[g.x+g.a/2*Math.cos(i*Math.PI/32),g.y+g.a/2*Math.sin(i*Math.PI/32)];line3(to3(prev),to3(p),[.4,.95,.77]);prev=p}}else for(const [a,b] of Object.values(mSegments(g)))line3(to3(a),to3(b),[.4,.95,.77])}}
  for(const l of mesh?.layouts||[])if(l.helix){const used=doc.features.some(f=>isSweep(f)&&f.path===l.id);if(used&&selected!==l.id&&!helixDraft&&!sweepDraft)continue;for(let i=1;i<l.points.length;i++)line3(l.points[i-1],l.points[i],selected===l.id?[1,.75,.3]:[.5,.7,1]);line3(...l.axisPoints,[.4,.5,.6]);}
@@ -157,7 +157,7 @@ function sketchBodySegments(){
  }
  const segments=[],epsilon=Math.max(1e-5,span*1e-7);
  const outlines=sketchSilhouettes(vertices,source.triangles);
- const bodyEdges=source.edges.map(edge=>({points:edge.points.map(local),ref:edge.ref}));
+ const bodyEdges=source.edges.map(edge=>({points:edge.points.map(local),ref:edge.ref,model:edge,endpoints:edge.endpoints?.map(local)}));
  for(const edge of [...bodyEdges,...outlines]){
   const points=edge.points,other=!edge.silhouette&&points.some(p=>Math.abs(p[2])>epsilon);
   for(let i=1;i<points.length;i++){
@@ -166,10 +166,10 @@ function sketchBodySegments(){
    for(let j=0;j<count;j++){
     const at=t=>add(a,mul(sub(b,a),t)),mid=at((j+.5)/count);
     const hidden=(buckets.get(cellX(mid[0])+','+cellY(mid[1]))||[]).some(t=>{const z=triangleDepth(mid,...t);return z!==null&&z>mid[2]+epsilon});
-    if(previousHidden!==null&&hidden!==previousHidden){const end=at(j/count);segments.push({a:runStart,b:end,other,hidden:previousHidden,ref:edge.ref});runStart=end}
+    if(previousHidden!==null&&hidden!==previousHidden){const end=at(j/count);segments.push({a:runStart,b:end,other,hidden:previousHidden,ref:edge.ref,edge});runStart=end}
     previousHidden=hidden;
    }
-   segments.push({a:runStart,b,other,hidden:previousHidden,ref:edge.ref});
+   segments.push({a:runStart,b,other,hidden:previousHidden,ref:edge.ref,edge});
   }
  }
  sketchEdgeCache={source,key,segments};return segments;
@@ -199,7 +199,7 @@ function draw2(){
 }
 function draw(){ctx.clearRect(0,0,W,H);$('mode').textContent=edgeTool?(edgeTool==='fillet'?'Verrundung · Kanten wählen':'Fase · Kanten wählen'):dimensionTool&&mode==='2d'?'Bemaßung · Punkte / Kanten':repair?'Auflage neu wählen':bind?'Referenzkante wählen':mode==='2d'?'Skizze · lokale U/V-Ebene':mesh?.vertices.length?'Volumenkörper':'Ursprung';$('help').textContent=edgeTool?'Kanten anklicken → Maß rechts eingeben → Anwenden · Esc: abbrechen':mode==='3d'?(originVisible?'Ebene anklicken · Doppelklick: neue Skizze · Ziehen: drehen':'Klick: Fläche wählen · Ziehen: drehen · Shift + Ziehen: verschieben · Mausrad: zoomen'):bind?'Gelbe Randkante anklicken · Abstand rechts einstellen':tool==='polyline'?'Punkte anklicken · Startpunkt schließt · Enter/Esc beendet offen':tool?'Profil aufziehen · Shift + Ziehen: Ansicht verschieben':dimensionTool&&angleMode?'Zwei Linien/Achsen wählen · Winkelbogen im gewünschten Sektor platzieren':dimensionTool?'Punkte / Kanten / Achsen wählen → Maß platzieren → direkt tippen · Esc: abbrechen':'Form ziehen: verschieben · Linienpunkt ziehen: ändern · Alt: ganzer Linienzug · Shift: Ansicht · Esc: 3D';mode==='3d'?draw3():draw2()}
 function fit(){zoom=1;pan=[0,0];draw()}
-function hitFace(x,y){if(!mesh)return null;let best=null,depth=-Infinity;const ps=screenVertices();mesh.triangles.forEach((t,i)=>{const [a,b,c]=t.map(j=>ps[j]),den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(den)<1e-9)return;const u=((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/den,v=((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/den,w=1-u-v;if(u>=-1e-6&&v>=-1e-6&&w>=-1e-6){const d=u*a[2]+v*b[2]+w*c[2];if(d>depth){depth=d;best=mesh.triangleFaces[i]}}});return best}
+function hitFace(x,y,anchor){if(!mesh)return null;let best=null,depth=-Infinity;const ps=screenVertices();mesh.triangles.forEach((t,i)=>{const [a,b,c]=t.map(j=>ps[j]),den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(den)<1e-9)return;const u=((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/den,v=((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/den,w=1-u-v;if(u>=-1e-6&&v>=-1e-6&&w>=-1e-6){const d=u*a[2]+v*b[2]+w*c[2];if(d>depth){depth=d;best=mesh.triangleFaces[i];if(anchor)for(let k=0;k<3;k++)anchor[k]=u*mesh.vertices[t[0]][k]+v*mesh.vertices[t[1]][k]+w*mesh.vertices[t[2]][k]}}});return best}
 function distSegment(p,a,b){const v=[b[0]-a[0],b[1]-a[1]],n=v[0]*v[0]+v[1]*v[1],t=n?Math.max(0,Math.min(1,((p[0]-a[0])*v[0]+(p[1]-a[1])*v[1])/n)):0;return Math.hypot(p[0]-a[0]-t*v[0],p[1]-a[1]-t*v[1])}
 async function newSketch(){edgeTool=null;edgeSelection=[];hoverEdge=null;if(!selectedFace&&!plane){originVisible=true;waitingPlane=true;mode='3d';render();status('Eine der drei Ursprungsebenen anklicken.');return;}dimensionTool=false;dimensionPicks=[];dimensionCursor=null;closeDimensionEditor();if(dirty&&!(await update()))return;const face=selectedInfo();if(selectedFace&&!face?.selectable){status('Bitte eine eindeutig referenzierbare ebene Fläche auswählen.',true);return}context={support:face?{face:face.key}:{plane},info:face||planeInfo(plane),id:null};selected=null;selectedKind='sketch';originVisible=false;hoverPlane=null;waitingPlane=false;tool='rect';bind=null;mode='2d';fit();render();status('Rechteck aufziehen oder Kreis wählen. Danach aufpolstern.')}
 async function editSketch(f){if(isTreatment(f))return false;edgeTool=null;edgeSelection=[];hoverEdge=null;dimensionTool=false;dimensionPicks=[];dimensionCursor=null;closeDimensionEditor();if(dirty&&!(mode==='2d'&&context?.id===f.id&&layout(f)?.solvedFeature===JSON.stringify(f))&&!(await update(true)))return false;const l=layout(f);if(!l){status('Skizzenauflage kann nicht aufgelöst werden. Auflage neu wählen.',true);return false}selected=f.id;selectedKind='sketch';originVisible=false;hoverPlane=null;context={id:f.id,support:f.support,info:l};mode='2d';tool=bind=null;fit();render();return true}
@@ -215,7 +215,7 @@ overlay.onpointermove=e=>{const p=point(e);if(mode==='2d'&&dimensionTool&&!drag)
 overlay.onpointerleave=()=>{if(!drag){hoverFace=null;hoverPlane=null;hoverEdge=null;draw()}};
 overlay.onpointerup=async e=>{if(!drag)return;const d=drag;drag=null;
  if(d.drawing&&d.move){const a=world(...d.start),b=world(...d.end),w=Math.abs(b[0]-a[0]),h=Math.abs(b[1]-a[1]);if(w>.1&&h>.1){const round=n=>Number(n.toFixed(2));const f={id:uid(),name:'Skizze '+(doc.features.length+1),support:structuredClone(context.support),shape:tool,op:'sketch',x:round((a[0]+b[0])/2),y:round((a[1]+b[1])/2),a:round(tool==='circle'?Math.min(w,h):w),b:round(h),depth:10,reverse:false};mutate(()=>{doc.features.push(f);selected=f.id;selectedKind='sketch'});context={...context,id:f.id};tool=null;const ok=await update();render();if(ok)status('Skizze erstellt · Maße einstellen und aufpolstern oder Tasche erzeugen.')}}
- else if(mode==='3d'&&!d.move&&!d.panning){if(edgeTool){const id=hitBodyEdge(...point(e));if(id!==null){const ref=mesh.edges[id].ref;if(edgeSelection.some(r=>edgeSame(r,ref)))edgeSelection=edgeSelection.filter(r=>!edgeSame(r,ref));else edgeSelection.push(ref);render()}else status('Bitte eine sichtbare eindeutig referenzierbare Körperkante anklicken.');return;}const pickedPlane=hitOriginPlane(...point(e));if(pickedPlane){await selectOriginPlane(pickedPlane);return;}if(dirty&&!repair){status('Vor der Flächenauswahl bitte aktualisieren oder rückgängig machen.',true);return}const hit=hitFace(...point(e)),face=hit===null?null:mesh.faces[hit];if(!face){selectedFace=null;render();return}if(!face.selectable){status(face.label,true);return}if(repair){const f=doc.features.find(x=>x.id===repair);mutate(()=>{f.support={face:face.key};delete f.rx;delete f.ry;f.dimensions=(f.dimensions||[]).filter(d=>![d.first?.kind,d.second?.kind].some(k=>k?.startsWith('support-')))});repair=null;await update()}else{selectedFace=face.key;selected=null;waitingPlane=false;originVisible=false;render();status('Fläche ausgewählt · „Skizze auf Auswahl“ startet eine neue Skizze.')}}draw();};
+ else if(mode==='3d'&&!d.move&&!d.panning){if(measure3DClick(point(e),e.altKey))return;if(edgeTool){const id=hitBodyEdge(...point(e));if(id!==null){const ref=mesh.edges[id].ref;if(edgeSelection.some(r=>edgeSame(r,ref)))edgeSelection=edgeSelection.filter(r=>!edgeSame(r,ref));else edgeSelection.push(ref);render()}else status('Bitte eine sichtbare eindeutig referenzierbare Körperkante anklicken.');return;}const pickedPlane=hitOriginPlane(...point(e));if(pickedPlane){await selectOriginPlane(pickedPlane);return;}if(dirty&&!repair){status('Vor der Flächenauswahl bitte aktualisieren oder rückgängig machen.',true);return}const hit=hitFace(...point(e)),face=hit===null?null:mesh.faces[hit];if(!face){selectedFace=null;render();return}if(!face.selectable){status(face.label,true);return}if(repair){const f=doc.features.find(x=>x.id===repair);mutate(()=>{f.support={face:face.key};delete f.rx;delete f.ry;f.dimensions=(f.dimensions||[]).filter(d=>![d.first?.kind,d.second?.kind].some(k=>k?.startsWith('support-')))});repair=null;await update()}else{selectedFace=face.key;selected=null;waitingPlane=false;originVisible=false;render();status('Fläche ausgewählt · „Skizze auf Auswahl“ startet eine neue Skizze.')}}draw();};
 overlay.onpointercancel=()=>{drag=null;draw()};overlay.onwheel=e=>{e.preventDefault();zoom=Math.max(.15,Math.min(8,zoom*Math.exp(-e.deltaY*.001)));draw()};overlay.ondblclick=async e=>{if(mode==='3d'){const p=hitOriginPlane(...point(e));if(p){await selectOriginPlane(p);await newSketch()}else fit()}};
 // Sketch dimensions: semantic point/edge references and explicit placement.
 let dimensionTool=false,dimensionPicks=[],dimensionAxis='auto',dimensionHover=null,dimensionCursor=null,dimensionLabels=[],editingDimension=null,dimensionDraft=null;
@@ -285,8 +285,8 @@ let edgeTool=null,edgeSelection=[],hoverEdge=null,edgeAmount=1,edgeApplying=fals
 const isTreatment=f=>f&&['fillet','chamfer'].includes(f.op);
 const edgeSame=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 function drawBodyEdges(){if(!gl||!mesh?.edges)return;const out=[];for(const e of mesh.edges){const picked=edgeSelection.some(r=>edgeSame(r,e.ref));const color=picked?[1,.72,.3]:(e.id===hoverEdge||(e.ref&&edgeSame(e.ref,mesh.edges[hoverEdge]?.ref)))?[.8,1,.95]:edgeTool?[.4,.62,.71]:[.09,.23,.25];for(let i=1;i<e.points.length;i++){for(const p of [e.points[i-1],e.points[i]]){const c=clip(project(p));c[2]-=.00002;out.push(...c,...color)}}}send(out,gl.LINES)}
-function hitBodyEdge(x,y){if(!mesh?.edges)return null;const screen=screenVertices(),triangles=mesh.triangles.map(t=>t.map(i=>screen[i]));let best=null,bestDistance=10,bestDepth=-Infinity;
- for(const e of mesh.edges){if(!e.selectable)continue;const points=e.points.map(project);for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dx=b[0]-a[0],dy=b[1]-a[1],n=dx*dx+dy*dy,t=n?Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/n)):0,q=[a[0]+t*dx,a[1]+t*dy],distance=Math.hypot(x-q[0],y-q[1]);if(distance>bestDistance+.01)continue;const depth=a[2]+t*(b[2]-a[2]);let surface=-Infinity;for(const tri of triangles){const d=triangleDepth(q,...tri);if(d!==null)surface=Math.max(surface,d)}if(depth<surface-.15)continue;if(distance<bestDistance-.01||depth>bestDepth){best=e.id;bestDistance=distance;bestDepth=depth}}}return best;}
+function hitBodyEdge(x,y,allEdges=false){if(!mesh?.edges)return null;const screen=screenVertices(),triangles=mesh.triangles.map(t=>t.map(i=>screen[i]));let best=null,bestDistance=10,bestDepth=-Infinity;
+ for(const e of mesh.edges){if(!allEdges&&!e.selectable)continue;const points=e.points.map(project);for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dx=b[0]-a[0],dy=b[1]-a[1],n=dx*dx+dy*dy,t=n?Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/n)):0,q=[a[0]+t*dx,a[1]+t*dy],distance=Math.hypot(x-q[0],y-q[1]);if(distance>bestDistance+.01)continue;const depth=a[2]+t*(b[2]-a[2]);let surface=-Infinity;for(const tri of triangles){const d=triangleDepth(q,...tri);if(d!==null)surface=Math.max(surface,d)}if(depth<surface-.15)continue;if(distance<bestDistance-.01||depth>bestDepth){best=e.id;bestDistance=distance;bestDepth=depth}}}return best;}
 async function startEdgeTool(kind){if(busy)return;if(dirty&&!(await update()))return;if(!mesh?.vertices.length){status('Zuerst einen Körper erzeugen.',true);return}edgeTool=kind;edgeSelection=[];hoverEdge=null;selected=null;selectedFace=null;context=null;originVisible=false;dimensionTool=false;tool=bind=null;closeDimensionEditor();mode='3d';render();status('Eine oder mehrere Kanten anklicken, Maß eingeben und anwenden.');}
 function edgeDraftPanel(){note(edgeTool==='fillet'?'Kantenverrundung':'Symmetrische Fase');note(edgeSelection.length+' Kante(n) / Lochrand ausgewählt. Erneuter Klick entfernt die Auswahl.');const label=document.createElement('label');label.textContent=edgeTool==='fillet'?'Radius (mm)':'Fasenmaß je Seite (mm)';const input=document.createElement('input');input.id='edgeValue';input.type='number';input.min='0.01';input.step='.5';input.value=edgeAmount;input.oninput=()=>{edgeAmount=Number(input.value)};input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();applyEdges()}};$('edit').append(label,input);button('Anwenden',applyEdges).disabled=!edgeSelection.length||edgeApplying;button('Abbrechen',()=>{edgeTool=null;edgeSelection=[];hoverEdge=null;render()});note('Einheitlicher Radius bzw. gleiches Fasenmaß auf beiden Seiten. Tangential zusammenhängende Kanten können gemeinsam bearbeitet werden.');}
 async function applyEdges(){if(edgeApplying||busy||!edgeTool||!edgeSelection.length)return;const amount=Number($('edgeValue').value);if(!(amount>0&&amount<=10000)){status('Bitte ein positives Maß bis 10000 mm eingeben.',true);return}const kind=edgeTool,f={id:uid(),name:kind==='fillet'?'Verrundung':'Fase',op:kind,amount,edges:structuredClone(edgeSelection)},candidate=structuredClone(doc);candidate.features.push(f);const before=JSON.stringify(doc);edgeApplying=true;try{const result=await (await request('/build',JSON.stringify(candidate))).json();if(JSON.stringify(doc)!==before)throw Error('Modell wurde zwischenzeitlich geändert. Bitte erneut anwenden.');mutate(()=>{doc=candidate;selected=f.id;selectedKind='feature';edgeTool=null;edgeSelection=[];hoverEdge=null});acceptBuiltResult(result);status('Kantenbearbeitung erstellt. Maß rechts weiterhin editierbar.')}catch(e){status(e.message,true)}finally{edgeApplying=false;render()}}
@@ -841,5 +841,137 @@ async function applyAssemblyPart(){if(!assemblyEditLoaded||assemblyEditInvalid||
 async function receiveAssemblyEdit(e){const m=e.data;if(!assemblyEditToken||e.origin!==location.origin||e.source!==window.opener||!m||m.channel!=='metriccad-part-edit'||m.token!==assemblyEditToken)return;if(m.type==='load'){await loadAssemblyPart(m);return}if(m.type==='invalid'){assemblyEditInvalid=true;assemblyApplyPending=null;$('assemblyApply').disabled=true;$('assemblyReload').disabled=true;assemblyNotice(m.error,true);return}if(m.type==='error'){assemblyNotice(m.error,true);return}if(m.type==='result'&&assemblyApplyPending?.id===m.request){const changed=JSON.stringify(doc)!==assemblyApplyPending.snapshot;assemblyApplyPending=null;if(m.ok&&!changed)linkedFiles.transferred();$('assemblyApply').disabled=false;$('assemblyReload').disabled=false;assemblyNotice(m.ok?'Übernommen: '+m.instances+' Instanz(en).'+(changed?' Weitere Änderungen im Editor sind noch nicht übernommen.':''):m.error,!m.ok);}}
 window.addEventListener('message',receiveAssemblyEdit);
 if(assemblyEditToken){$('assemblyEditBar').hidden=false;$('assemblyApply').disabled=true;$('assemblyApply').onclick=applyAssemblyPart;$('assemblyReload').onclick=()=>{if(busy||geometrySaving||assemblyBridgeLoading||assemblyApplyPending)return;if(assemblyEditLoaded&&!confirm('Den aktuellen Stand aus der Baugruppe laden? Nicht übernommene Bearbeitungen dieses Tabs werden verworfen.'))return;sendAssemblyMessage('reload')};for(const id of ['new','open']){$(id).hidden=true;$(id).onclick=()=>assemblyNotice('Dieser Tab bearbeitet das verknüpfte Baugruppenteil. Andere Projekte bitte in einem separaten Part-Design-Tab öffnen.',true);}assemblyNotice('Teil wird aus der Baugruppe geladen …');sendAssemblyMessage('ready');}
+
+// Measurements use sketch-plane coordinates in 2D and model coordinates in 3D.
+function silhouetteSpan(hit, segments) {
+ const uv = p => p.slice(0, 2);
+ const [a,b] = [uv(hit.a), uv(hit.b)], dx=b[0]-a[0], dy=b[1]-a[1], length=Math.hypot(dx,dy);
+ const along = p => ((p[0]-a[0])*dx+(p[1]-a[1])*dy)/length;
+ const offset = p => Math.abs((p[0]-a[0])*dy-(p[1]-a[1])*dx)/length;
+ const tol=Math.max(1e-6,length*.01);
+ const runs=segments.filter(s=>s.edge.silhouette && offset(s.a)<=tol && offset(s.b)<=tol)
+  .map(s=>[s.a,s.b].sort((p,q)=>along(p)-along(q))).sort((p,q)=>along(p[0])-along(q[0]));
+ let start=null,end=null;
+ for(const [p,q] of runs){
+  if(!end || along(p)>along(end)+tol){
+   if(end && along(start)<=tol && along(end)>=length-tol)break;
+   start=p;end=q;
+  }else if(along(q)>along(end))end=q;
+ }
+ return [uv(start),uv(end)];
+}
+
+const measure3DClick=(() => {
+ const button=$('measure'), hint='Kante oder zwei Punkte anklicken';
+ const mm=n=>n.toLocaleString('de-DE',{maximumFractionDigits:3})+' mm';
+ const distance=(a,b)=>Math.hypot(...a.map((v,i)=>v-b[i]));
+ const pathLength=pts=>pts.slice(1).reduce((sum,p,i)=>sum+distance(p,pts[i]),0);
+ let active=false, first=null, firstEdge=null, angleEdge=null, highlight=[], message='', space, sketch, model;
+ const screen=p=>mode==='2d'?xy(...p):project(p).slice(0,2);
+ function toggle(on){
+  active=on;measuredFace=null;first=firstEdge=angleEdge=null;highlight=[];message=hint;space=mode;sketch=context;model=mesh;
+  button.classList.toggle('active',on);button.setAttribute('aria-pressed',String(on));
+ }
+ function pick(p,faceOnly){
+  if(mode==='3d'){
+   const id=faceOnly?null:hitBodyEdge(...p,true), edge=mesh?.edges.find(e=>e.id===id);
+   if(!edge){
+    const anchor=[], face=mesh?.faces[hitFace(...p,anchor)];
+    if(!face || !Number.isFinite(face.area))return;
+    const area=face.area.toLocaleString('de-DE',{maximumFractionDigits:3})+' mm²';
+    return {face:face.id,path:[anchor],text:'Fläche '+area+(face.radius?' · Ø '+mm(2*face.radius):'')};
+   }
+   const end=edge.endpoints?.filter(q=>distance(screen(q),p)<8).sort((a,b)=>distance(screen(a),p)-distance(screen(b),p))[0];
+   return end?{point:end}:{path:edge.points,key:edge.kind==='LINE'?edge:null,text:'Kantenlänge '+mm(edge.length)+(edge.diameter?' · Ø '+mm(edge.diameter):'')};
+  }
+  const segments=visibleSketchBodySegments();
+  const targets=geometryTargets().filter(t=>t.ref.kind!=='axis' && (t.point || (!t.ref.external && t.ref.kind!=='support-edge')));
+  const nearest=items=>items.map(t=>({t,d:targetDistance(t,p)})).filter(h=>h.d<8).sort((a,b)=>a.d-b.d)[0];
+  const body=segments.map(s=>({s,d:distSegment(p,xy(...s.a),xy(...s.b))})).filter(h=>h.d<8)
+   .sort((a,b)=>a.d-b.d || Number(a.s.edge.silhouette)-Number(b.s.edge.silhouette))[0];
+  const span=body?.s.edge.silhouette?silhouetteSpan(body.s,segments):null;
+  const ends=span || body?.s.edge.endpoints || [];
+  const vertex=nearest([...targets.filter(t=>t.point),...ends.filter(q=>span || segments.some(s=>s.edge===body.s.edge && distSegment(q,s.a,s.b)<1e-6)).map(q=>({point:q.slice(0,2)}))]);
+  if(vertex)return {point:vertex.t.point.slice(0,2)};
+  const native=nearest(targets.filter(t=>!t.point));
+  if(native && (!body || native.d<=body.d+.5)){
+   const t=native.t;
+   if(t.center){
+    const arc=t.arc || {x:t.center[0],y:t.center[1],a:2*t.radius,start:0,sweep:2*Math.PI};
+    const path=arcSegments(arc).map(s=>s[0]).concat([arcPoint(arc,arc.start+arc.sweep)]);
+    return {path,text:'Ø '+mm(2*t.radius)+' · '+(t.arc?'Bogenlänge ':'Umfang ')+mm(Math.abs(arc.sweep)*t.radius)};
+   }
+   const path=t.points || [t.pickSegments[0][0],...t.pickSegments.map(s=>s[1])];
+   return {path,key:t.points?JSON.stringify(t.ref):null,text:'Länge '+(t.points?'':'≈ ')+mm(pathLength(path))};
+  }
+  if(!body)return;
+  const edge=body.s.edge;
+  const path=span || edge.points.map(q=>q.slice(0,2));
+  const approx=edge.model?.kind!=='LINE';
+  const text=(edge.silhouette?'Silhouette ':'Projektionslänge ')+(approx?'≈ ':'')+mm(pathLength(path));
+  return {path,key:span?JSON.stringify([...span].sort()):(!approx?edge:null),approxAngle:!!span,text:text+(edge.model?' · 3D-Länge '+mm(edge.model.length)+(edge.model.diameter?' · Ø 3D '+mm(edge.model.diameter):''):'')};
+ }
+ function measureAt(p,faceOnly=false){
+  const hit=pick(p,faceOnly);
+  if(hit)measuredFace=hit.face??null;
+  if(hit?.point){
+   firstEdge=angleEdge=null;
+   highlight=first?[first,hit.point]:[hit.point];
+   message=first?'Abstand '+mm(distance(first,hit.point)):'Erster Punkt gewählt · zweiten Punkt anklicken';
+   first=first?null:hit.point;
+  }else if(hit){
+   first=null;angleEdge=null;highlight=hit.path;message=hit.text;
+   if(firstEdge && hit.key!=null && firstEdge.key!==hit.key){
+    const direction=path=>path.at(-1).map((v,i)=>v-path[0][i]);
+    const a=direction(firstEdge.path), b=direction(hit.path), scale=Math.hypot(...a)*Math.hypot(...b);
+    if(scale>0){
+     const cosine=Math.abs(a.reduce((sum,v,i)=>sum+v*b[i],0))/scale;
+     const degrees=Math.acos(Math.min(1,cosine))*180/Math.PI;
+     message='Winkel '+(firstEdge.approxAngle||hit.approxAngle?'≈ ':'')+degrees.toLocaleString('de-DE',{maximumFractionDigits:3})+'°';
+     angleEdge=firstEdge.path;
+    }
+   }
+   firstEdge=hit.key!=null && !angleEdge?hit:null;
+  }
+  else if(first)message='Zweiten Punkt anklicken';
+  draw();
+ }
+ const previousDraw=draw;
+ draw=function(){
+  previousDraw();
+  if(!active)return;
+  if(space!==mode || sketch!==context || model!==mesh){toggle(false);return;}
+  $('mode').textContent='Messen';$('help').textContent=message+(firstEdge?' · Zweite Gerade für Winkel wählen':'')+(mode==='3d'?' · Alt-Klick: Fläche · Ziehen: drehen':'')+' · Esc beendet';
+  if(angleEdge)line(screen(angleEdge[0]),screen(angleEdge.at(-1)),'#ffd166',2);
+  const pts=highlight.map(screen);
+  for(let i=1;i<pts.length;i++)line(pts[i-1],pts[i],'#ffd166',2);
+  if((pts.length>1 || measuredFace!==null) && W>24 && H>24){
+   const mid=Math.floor(pts.length/2), a=pts[Math.max(0,mid-1)], b=pts[mid];
+   const anchor=[(a[0]+b[0])/2,(a[1]+b[1])/2], rows=message.split(' · ');
+   ctx.save();ctx.font='13px system-ui';ctx.textAlign='left';ctx.textBaseline='middle';
+   const width=Math.min(W-8,16+Math.max(...rows.map(row=>ctx.measureText(row).width)));
+   const height=rows.length*17+6;
+   const x=Math.max(4,Math.min(W-width-4,anchor[0]+14));
+   const y=Math.max(4,Math.min(H-height-4,anchor[1]-height-14));
+   line(anchor,[Math.max(x,Math.min(x+width,anchor[0])),Math.max(y,Math.min(y+height,anchor[1]))],'#ffd166');
+   ctx.fillStyle='#112231';ctx.fillRect(x,y,width,height);
+   ctx.strokeStyle='#ffd166';ctx.lineWidth=1;ctx.strokeRect(x,y,width,height);
+   ctx.fillStyle='#ffd166';
+   rows.forEach((row,i)=>ctx.fillText(row,x+8,y+12+i*17,width-16));
+   ctx.restore();
+  }
+  if(pts.length===1){ctx.beginPath();ctx.arc(...pts[0],4,0,2*Math.PI);ctx.fillStyle='#ffd166';ctx.fill();}
+ };
+ button.onclick=()=>{if(!busy && !geometrySaving){toggle(!active);draw();}};
+ document.addEventListener('click',e=>{if(active && e.target.closest?.('button') && !button.contains(e.target)){toggle(false);draw();}},true);
+ document.addEventListener('keydown',e=>{if(active && e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();toggle(false);draw();}},true);
+ for(const event of ['pointerdown','pointerup','dblclick'])overlay.addEventListener(event,e=>{
+  if(!active || e.button!==0 || e.shiftKey || drag)return;
+  if(mode==='3d' && event!=='dblclick')return;
+  e.preventDefault();e.stopImmediatePropagation();
+  if(event==='pointerdown' && !busy && !geometrySaving)measureAt(point(e));
+ },true);
+ return (p,faceOnly)=>{if(active && !busy && !geometrySaving)measureAt(p,faceOnly);return active;};
+})();
 
 render();

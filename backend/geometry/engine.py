@@ -5,6 +5,7 @@ import math
 import cadquery as cq
 from . import sketches
 from . import sweeps
+from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse, BRepAlgoAPI_Cut
 
 class ModelError(ValueError): pass
@@ -221,6 +222,17 @@ def resolve_support(support,registry):
 
 # A sketch may reference only the body built BEFORE that sketch. This avoids
 # circular dependencies and makes external geometry read-only for the solver.
+def display_edge(edge):
+    kind = edge.geomType()
+    points, _ = edge.sample(2 if kind == 'LINE' else 64)
+    if edge.IsClosed() and points and (points[0]-points[-1]).Length > 1e-7:
+        points.append(points[0])
+    data = {'points': [arr(p) for p in points], 'length': edge.Length(),
+            'endpoints': [arr(v.Center()) for v in edge.Vertices()], 'kind': kind}
+    if kind == 'CIRCLE':
+        data['diameter'] = 2*edge.radius()
+    return data
+
 def reference_body(body,registry):
     if body is None:return {'vertices':[],'triangles':[],'edges':[]}
     vertices=[];triangles=[]
@@ -232,9 +244,7 @@ def reference_body(body,registry):
         vertices.extend(arr(v) for v in vs);triangles.extend([[i+offset for i in t] for t in ts])
     edges=[]
     for item in edge_catalog(body,registry):
-        edge=item['edge'];pts,_=edge.sample(2 if edge.geomType()=='LINE' else 64)
-        if edge.IsClosed() and pts and (pts[0]-pts[-1]).Length>1e-7:pts.append(pts[0])
-        edges.append({'ref':item['ref'],'points':[arr(p) for p in pts]})
+        edges.append({'ref':item['ref'], **display_edge(item['edge'])})
     return {'vertices':vertices,'triangles':triangles,'edges':edges}
 
 _EXTERNAL_CACHE=[]
@@ -728,6 +738,28 @@ def editor_preview(raw):
             result["layouts"].append(error.layout)
         return result
 
+def face_measurements(face):
+    data = {'area': face.Area()}
+    kind = face.geomType()
+    if kind == 'CYLINDER':
+        data['radius'] = BRepAdaptor_Surface(face.wrapped).Cylinder().Radius()
+    elif kind == 'PLANE':
+        # Only the outer contour defines the face radius. Holes affect its area.
+        edges = face.outerWire().Edges()
+        arcs = [edge for edge in edges if edge.geomType() == 'CIRCLE']
+        if arcs:
+            center, radius = arcs[0].arcCenter(), arcs[0].radius()
+            tol = max(1e-7, radius * 1e-8)
+            lines = [edge for edge in edges if edge.geomType() == 'LINE']
+            circular = all((arc.arcCenter()-center).Length <= tol and abs(arc.radius()-radius) <= tol for arc in arcs)
+            # A chord closes a segment, two radial sides close a sector.
+            if circular and len(arcs)+len(lines) == len(edges) and (
+                len(lines) <= 1 or (len(lines) == 2 and all(
+                    any((v.Center()-center).Length <= tol for v in line.Vertices()) for line in lines))
+            ):
+                data['radius'] = radius
+    return data
+
 def preview(raw):
     body,registry,layouts,doc=build_state(raw)
     if report := build_progress.get():
@@ -746,11 +778,11 @@ def preview(raw):
             key,e=unique[-1];item.update(key=key,label=e['label'],selectable=face.geomType()=='PLANE');item.update(face_info(face,e))
         elif matches:item['label']='Geteilte Fläche · Referenz mehrdeutig'
         if not item['planar']:item['label']='Gekrümmte Fläche · keine ebene Skizzenauflage'
+        item.update(face_measurements(face))
         faces.append(item)
     edges=[]
     for i,item in enumerate(edge_catalog(body,registry)):
-        e=item['edge'];pts,_=e.sample(2 if e.geomType()=='LINE' else 64)
-        edges.append({'id':i,'ref':item['ref'],'points':[arr(p) for p in pts],'selectable':item['ref'] is not None})
+        edges.append({'id':i,'ref':item['ref'],'selectable':item['ref'] is not None, **display_edge(item['edge'])})
     b=body.BoundingBox()
     return {'document':doc,'vertices':vertices,'triangles':triangles,'triangleFaces':triangle_faces,'faces':faces,'edges':edges,'layouts':layouts,'volume':body.Volume(),'solidCount':len(body.Solids()),'bounds':[b.xmin,b.xmax,b.ymin,b.ymax,b.zmin,b.zmax]}
 
