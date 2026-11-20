@@ -114,8 +114,33 @@ function sketchViewPanel(){
  }
  note('Verdeckte Körperkanten erscheinen gestrichelt. Die aktive Skizze und ihre Auflage bleiben sichtbar. Eindeutige Referenzkanten und Kreismittelpunkte sind für Maße und Bedingungen auswählbar.');
 }
+// A contour separates front-facing triangles from back-facing or edge-on ones.
+function sketchSilhouettes(vertices,triangles){
+ const unique=new Map(),edges=new Map();
+ // Tessellation duplicates vertices along face boundaries and periodic seams.
+ const ids=vertices.map((p,i)=>{
+  const key=p.map(x=>Math.round(x*1e8)).join(',');
+  if(!unique.has(key))unique.set(key,i);
+  return unique.get(key);
+ });
+ for(const tri of triangles){
+  const [a,b,c]=tri.map(i=>ids[i]);
+  if(a===b||b===c||a===c)continue;
+  const p=vertices[a],q=vertices[b],r=vertices[c];
+  const area=(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+  const side=area>1e-10?1:2;
+  for(const [i,j] of [[a,b],[b,c],[c,a]]){
+   const key=Math.min(i,j)+','+Math.max(i,j);
+   const edge=edges.get(key);
+   if(edge)edge.sides|=side;
+   else edges.set(key,{i,j,sides:side});
+  }
+ }
+ return Array.from(edges.values()).filter(e=>e.sides===3)
+  .map(e=>({points:[vertices[e.i],vertices[e.j]],silhouette:true}));
+}
 function sketchBodySegments(){
- const source=context?.info.referenceBody||mesh;const frame=context?.info.frame;if(!frame||!source?.edges?.length)return [];
+ const source=context?.info.referenceBody||mesh;const frame=context?.info.frame;if(!frame||!source?.vertices?.length)return [];
  const key=JSON.stringify(frame);if(sketchEdgeCache?.source===source&&sketchEdgeCache.key===key)return sketchEdgeCache.segments;
  const local=p=>{const d=sub(p,frame.o);return [dot(d,frame.u),dot(d,frame.v),dot(d,frame.n)]};
  const vertices=source.vertices.map(local),triangles=source.triangles.map(t=>t.map(i=>vertices[i]));
@@ -131,7 +156,10 @@ function sketchBodySegments(){
    }
  }
  const segments=[],epsilon=Math.max(1e-5,span*1e-7);
- for(const edge of source.edges){const points=edge.points.map(local),other=points.some(p=>Math.abs(p[2])>epsilon);
+ const outlines=sketchSilhouettes(vertices,source.triangles);
+ const bodyEdges=source.edges.map(edge=>({points:edge.points.map(local),ref:edge.ref}));
+ for(const edge of [...bodyEdges,...outlines]){
+  const points=edge.points,other=!edge.silhouette&&points.some(p=>Math.abs(p[2])>epsilon);
   for(let i=1;i<points.length;i++){
    const a=points[i-1],b=points[i],length=Math.hypot(b[0]-a[0],b[1]-a[1]);if(length<epsilon)continue;
    const count=Math.max(1,Math.ceil(length/(span/600)));let runStart=a,previousHidden=null;
