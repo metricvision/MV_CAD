@@ -6,20 +6,21 @@ header{height:60px}main{height:calc(100vh - 164px);grid-template-columns:240px m
 
 
 #tools{gap:8px;padding:0 12px;flex-wrap:nowrap;overflow-x:auto}
-#tools .tool-group{flex:0 0 auto;gap:3px;padding-right:8px}
+#tools .tool-group{flex:0 0 auto;flex-direction:column;gap:5px;padding-right:8px}
+#tools .tool-row{display:flex;align-items:center;gap:3px}
+#tools .tool-group::after{content:attr(aria-label);font-size:10px;font-weight:500;line-height:10px;color:#71869b;white-space:nowrap}
 #tools .icon-tool{width:36px;flex:0 0 36px;padding:6px}
-#relation-tools .icon-tool{font-size:22px}
-#relation-tools #rel-mirror{font-size:19px}
-#relation-tools>button:not(.icon-tool){white-space:nowrap;padding:7px 9px;font-size:12px}
+#tools .icon-tool[id^="rel-"]{font-size:22px}
+#tools .tool-row>button:not(.icon-tool){white-space:nowrap;padding:7px 9px;font-size:12px}
 #tools .toolbar-status{min-width:0;flex:1 1 100px}
 #tools #dimAxis{width:96px}
 
 
-#tools{height:42px}
+#tools{height:auto;min-height:42px;scrollbar-width:thin}
 #tools .icon-tool{height:30px;width:32px;flex-basis:32px;padding:4px}
 #tools .icon-tool svg{width:22px;height:22px}
 #tools #dimAxis{padding:4px 6px}
-#relation-tools>button:not(.icon-tool){padding:4px 8px}
+#tools .tool-row>button:not(.icon-tool){padding:4px 8px}
 header{height:42px;min-height:42px;padding:5px 12px;gap:7px;flex-wrap:nowrap;overflow-x:auto}
 header strong{font-size:18px;margin-right:4px;white-space:nowrap;flex-shrink:0}
 header small{font-size:11px;white-space:nowrap;flex-shrink:0}
