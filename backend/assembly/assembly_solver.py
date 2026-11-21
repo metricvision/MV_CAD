@@ -70,17 +70,26 @@ def solve_constraints(instances,joints,frames,constraints,reference_frames,drag=
     seeds={k:initial[k].copy() for k in movable}
     for c in constraints:
         child=c['child']
-        if child not in seeds:continue
-        a=seeds.get(c['parent'],initial[c['parent']])@reference_frames[(c['id'],'parent')]
-        b=seeds[child]@reference_frames[(c['id'],'child')]
-        n=a[:3,2]*(-1 if c.get('opposed',False) else 1);v=b[:3,2]
+        parent=c['parent']
+        if child not in seeds and parent not in seeds:continue
+        a=seeds.get(parent,initial[parent])@reference_frames[(c['id'],'parent')]
+        b=seeds.get(child,initial[child])@reference_frames[(c['id'],'child')]
+        moving,datum,anchor=(child,b,a) if child in seeds else (parent,a,b)
+        n=anchor[:3,2];v=datum[:3,2]
+        if c['type'] in ('angle','tangent'):
+            angle=math.radians(c['angle'] if c['type']=='angle' else 90)
+            tangent=v-n*np.dot(v,n)
+            if np.linalg.norm(tangent)<1e-8:tangent=anchor[:3,0]
+            n=n*math.cos(angle)+tangent/np.linalg.norm(tangent)*math.sin(angle)
+        elif c.get('opposed',False):
+            n=-n
         axis=np.cross(v,n);s=np.linalg.norm(axis);cos=np.clip(np.dot(v,n),-1,1)
         if s>1e-10:r=Rotation.from_rotvec(axis/s*math.atan2(s,cos)).as_matrix()
         elif cos<0:
-            axis=b[:3,0];r=Rotation.from_rotvec(axis*math.pi).as_matrix()
+            axis=datum[:3,0];r=Rotation.from_rotvec(axis*math.pi).as_matrix()
         else:r=np.eye(3)
         if cos<.999999:
-            pivot=b[:3,3].copy();t=seeds[child];t[:3,3]=pivot+r@(t[:3,3]-pivot);t[:3,:3]=r@t[:3,:3]
+            pivot=datum[:3,3].copy();t=seeds[moving];t[:3,3]=pivot+r@(t[:3,3]-pivot);t[:3,:3]=r@t[:3,:3]
     nroots=len(movable);x0=np.zeros(6*nroots+len(active));lower=np.full(len(x0),-np.inf);upper=-lower
     for k,j in enumerate(active):
         index=6*nroots+k;x0[index]=j['value']
@@ -111,6 +120,19 @@ def solve_constraints(instances,joints,frames,constraints,reference_frames,drag=
             a=transforms[c['parent']]@reference_frames[(c['id'],'parent')]
             b=transforms[c['child']]@reference_frames[(c['id'],'child')]
             n=a[:3,2];delta=b[:3,3]-a[:3,3]
+            if c['type']=='angle':
+                angle=c['angle']
+                if angle in (0,180):
+                    out.extend(10*(b[:3,2]-(n if angle==0 else -n)))
+                else:
+                    actual=math.atan2(np.linalg.norm(np.cross(n,b[:3,2])),np.dot(n,b[:3,2]))
+                    out.append(10*(actual-math.radians(angle)))
+                continue
+            if c['type']=='tangent':
+                radius=reference_frames[(c['id'],'radius')]
+                distance=-radius if c.get('opposed',False) else radius
+                out.extend((10*np.dot(n,b[:3,2]),np.dot(delta,n)-distance))
+                continue
             out.extend(10*(b[:3,2]-n*(-1 if c.get('opposed',False) else 1)))
             if c['type']=='offset':out.append(float(np.dot(delta,n)-c['offset']))
             else:out.extend(delta-n*np.dot(delta,n))

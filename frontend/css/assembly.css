@@ -3,3 +3,46 @@
 [hidden]{display:none!important}
 
 #gizmo{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}button.active{background:#17695f;border-color:#64e0c6}
+
+#assembly-tools { height: auto; min-height: 46px; gap: 8px; padding: 2px 12px; }
+#assembly-tools .tool-group { display: grid; justify-items: center; gap: 3px; flex: none; padding-right: 8px; border-right: 1px solid #35465a; }
+#assembly-tools .tool-group:last-of-type { border: 0; }
+#assembly-tools .tool-group::after { content: attr(aria-label); color: #8da2b6; font: 500 10px/10px system-ui; }
+#assembly-tools .tool-row { display: flex; gap: 3px; }
+#assembly-tools button { display: grid; place-items: center; width: 32px; height: 30px; padding: 4px; border-color: transparent; background: transparent; }
+#assembly-tools button:hover:enabled, #assembly-tools button:focus-visible { background: #324a61; border-color: #54718b; }
+#assembly-tools button.active { background: #166e63; border-color: #43cbb1; }
+#assembly-tools svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+#assembly-tools:has(button:focus-visible)::after { content: attr(data-focus-label); font-size: 12px; }
+@media (min-width: 761px) {
+  body { display: grid; height: 100dvh; grid-template-rows: auto auto minmax(0,1fr) auto; }
+  main { height: auto; }
+}
+
+#assembly-tools [aria-label="Gelenke"] button { width: 40px; padding: 2px; }
+#assembly-tools [aria-label="Gelenke"] svg { width: 35px; height: 26px; }
+.mate-marker { color: #89ddd4; }
+.mate-marker.selected { color: #ffce73; }
+.mate-marker path, .mate-marker circle { stroke: currentColor; fill: none; stroke-width: 1.7; }
+.mate-marker .witness { stroke-dasharray: 3 3; opacity: .8; }
+.mate-marker circle { fill: #172536; }
+.mate-marker rect { fill: #142430; stroke: currentColor; }
+.mate-marker text { fill: currentColor; font: 12px system-ui; text-anchor: middle; }
+
+@media (min-width: 1001px) {
+  main { grid-template-columns: clamp(280px, 23vw, 370px) minmax(250px, 1fr) 340px; }
+}
+.model-row { display: flex; align-items: center; height: 32px; padding-left: 18px; }
+.model-row:has(.tree-toggle) { padding-left: 0; }
+.model-row.selected { background: #30465e; }
+.model-row button { border: 0; border-radius: 3px; background: transparent; padding: 2px; }
+.model-row button:hover { background: #30465e; }
+.tree-toggle { flex: 0 0 18px; font-size: 16px; }
+.tree-label { display: flex; align-items: center; gap: 7px; min-width: 0; text-align: left; }
+.tree-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tree svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.model-branch, .model-children { border-left: 1px solid #425569; margin-left: 8px; padding-left: 12px; }
+.model-branch { padding-left: 25px; }
+.linked-instances { position: relative; }
+.instance-bracket { position: absolute; top: 16px; bottom: 16px; left: -17px; width: 12px; border: solid #39d8cf; border-width: 2px 0 2px 2px; color: #39d8cf; }
+.instance-bracket svg { position: absolute; top: 50%; left: -1px; transform: translate(-50%, -50%); background: #152130; }

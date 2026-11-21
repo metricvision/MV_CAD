@@ -46,12 +46,16 @@ def validate(raw):
             if lo>=hi or not lo<=j['value']<=hi:raise AssemblyError('Gelenkwert außerhalb der Grenzen oder Grenzen ungültig')
     instances={i['id'] for i in d['instances']}
     for c in d['constraints']:
-        if c.get('type') not in ('offset','concentric'):raise AssemblyError('Unbekannte Flächenbedingung')
+        if c.get('type') not in ('offset','concentric','angle','tangent'):raise AssemblyError('Unbekannte Flächenbedingung')
         if c.get('parent') not in instances or c.get('child') not in instances or c['parent']==c['child']:raise AssemblyError('Bedingung benötigt zwei unterschiedliche Instanzen')
         if type(c.get('opposed',False)) is not bool:raise AssemblyError('Ungültige Flächenausrichtung')
         for side in ('parent','child'):
             face=c.get(side+'Face')
             if not isinstance(face,str) or not face or len(face)>1000:raise AssemblyError('Flächenreferenz fehlt')
+        if c['type']=='angle':
+            c['angle']=number(c.get('angle'),'Winkel')
+            if not 0 <= c['angle'] <= 180:
+                raise AssemblyError('Winkel muss zwischen 0 und 180 Grad liegen')
         if c['type']=='offset':c['offset']=number(c.get('offset',0),'Flächenabstand')
     return d
 
@@ -70,8 +74,20 @@ def prepare(raw,include_mesh=False):
     for c in d['constraints']:
         for side in ('parent','child'):
             asset=assets[instances[c[side]]['part']];key=c[side+'Face'];datum=asset['datums'].get(key)
-            expected='PLANE' if c['type']=='offset' else 'CYLINDER'
-            if not datum or datum['type']!=expected:raise AssemblyError('Bedingungsreferenz fehlt oder hat falschen Flächentyp: '+key)
+            if not datum:
+                raise AssemblyError('Bedingungsreferenz fehlt: '+key)
+            kind=datum['type']
+            if c['type']=='tangent':
+                # Stored order is plane, cylinder, independent of the pick order.
+                expected='PLANE' if side=='parent' else 'CYLINDER'
+                if side=='child' and kind=='CYLINDER':
+                    references[(c['id'],'radius')]=datum['radius']
+            elif c['type']=='angle':
+                expected=kind if kind in ('PLANE','CYLINDER') else None
+            else:
+                expected='PLANE' if c['type']=='offset' else 'CYLINDER'
+            if kind!=expected:
+                raise AssemblyError('Unpassender Flächentyp: '+key)
             references[(c['id'],side)]=frame_matrix({'face':key},asset)
     drag=raw.get('_drag');drive=raw.get('_drive')
     if drag is not None:

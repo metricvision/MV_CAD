@@ -23,6 +23,10 @@ def part_asset(document):
             frame={'o':o.tolist(),'u':u.tolist(),'v':np.cross(n,u).tolist(),'n':n.tolist()}
         else:continue
         datums[name]={'type':kind,'label':entry.get('label',name),'frame':frame}
+        if kind=='PLANE':
+            datums[name]['center']=list(face.Center().toTuple())
+        if kind=='CYLINDER':
+            datums[name]['radius']=cylinder.Radius()
     asset={'key':key,'body':body,'document':normalized,'mesh':{k:preview[k] for k in ['vertices','triangles','triangleFaces','faces','edges','bounds']},'datums':datums}
     _CACHE[key]=asset
     while len(_CACHE)>30:_CACHE.popitem(last=False)
