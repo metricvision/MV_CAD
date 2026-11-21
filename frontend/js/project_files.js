@@ -82,3 +82,22 @@ function bindProjectFiles({defaultName, blocked, replace}) {
     transferred(){if(!handle)saved=JSON.stringify(doc);}
   };
 }
+
+// Keep the command menus aligned even when the compact header scrolls.
+for(const trigger of document.querySelectorAll('.cad-header [popovertarget]')){
+  const menu=document.getElementById(trigger.getAttribute('popovertarget'));
+  menu.addEventListener('toggle',()=>{
+    const open=menu.matches(':popover-open');
+    trigger.setAttribute('aria-expanded',String(open));
+    if(!open)return;
+    const rect=trigger.getBoundingClientRect();
+    menu.style.top=rect.bottom+2+'px';
+    const width=document.documentElement.clientWidth;
+    if(rect.left>width/2)menu.style.right=Math.max(0,width-rect.right)+'px';
+    else menu.style.left=Math.max(0,rect.left)+'px';
+    menu.style[rect.left>width/2?'left':'right']='auto';
+  });
+  menu.addEventListener('click',e=>{
+    if(e.target.closest('button,a') && !['sharedProjectList','mcpToggle','mcpCopy'].includes(e.target.id))menu.hidePopover?.();
+  });
+}

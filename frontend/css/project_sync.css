@@ -1,6 +1,15 @@
-#sharedProjectBar{display:flex;flex:none;align-items:center;gap:7px;font-size:12px;white-space:nowrap}
-#sharedProjectBar select{max-width:230px;width:auto;padding:3px 7px;background:#1c3343;color:#e0eaf4;border:1px solid #365164;border-radius:4px;font-size:12px}
-#sharedProjectState{color:#8ccebb;flex:1}
-#sharedProjectBar .sync-error{color:#ffd39a}
-#mcpState{color:#8ccebb;max-width:260px;white-space:normal}
-#mcpUrl{width:225px;flex-shrink:0;margin:0;padding:3px 7px;font-size:11px}
+.cad-header{gap:5px;background:#121e2a}
+.cad-header .commands{display:flex;align-items:center;gap:1px;padding-left:7px;border-left:1px solid #35465a}
+.cad-header button,.cad-menu a{height:28px;padding:3px 8px;border:1px solid transparent;border-radius:2px;background:transparent;color:#dbe7ef;font:13px/20px system-ui;text-decoration:none;white-space:nowrap}
+.cad-header button:hover,.cad-menu a:hover{background:#293c4d;border-color:#405568}
+.cad-header .workspace-switch,.cad-header button[aria-expanded="true"]{background:#1b2b39;border-color:#35495b}
+.cad-header #update{color:#8fe2d4;border-color:#33685f}
+.cad-menu{position:fixed;inset:auto;margin:0;padding:4px;background:#192839;color:#dbe7ef;border:1px solid #415366;border-radius:2px;max-height:75vh;overflow:auto}
+.cad-menu:popover-open{display:grid;gap:2px}
+.cad-menu button,.cad-menu a{text-align:left;width:100%}
+.cad-menu span,.cad-menu select,.cad-menu input{padding:4px 8px;font-size:12px}
+.cad-menu [aria-current]{color:#8ed8ca}
+#sharedProjectState{flex:1;color:#8ccebb;font-size:12px;text-align:right;white-space:nowrap}
+#mcpState{color:#8ccebb}
+.cad-header .sync-error{color:#ffd39a}
+#mcpUrl{width:225px;margin:0}

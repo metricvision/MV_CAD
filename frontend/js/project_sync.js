@@ -8,11 +8,7 @@
   let token = null, project = null, acknowledged = null;
   let applying = false, saving = null, loading = false, conflict = false, ready = false;
   let timer = null, polling = false, errorText = '';
-  const bar = document.createElement('div');
-  bar.id = 'sharedProjectBar';
-  bar.innerHTML = '<button id="sharedProjectList">Arbeitsprojekte laden</button><select id="sharedProjectSelect" aria-label="Arbeitsprojekt auswählen" hidden></select><span id="sharedProjectState" role="status">Projekt wird geladen …</span><button id="sharedProjectReload" hidden>Serverstand laden</button><button id="sharedProjectFork" hidden>Entwurf als neues Projekt</button>';
-  $('assemblyWorkspace').after(bar);
-  bar.insertAdjacentHTML('beforeend','<button id="mcpToggle" disabled>MCP starten</button><span id="mcpState" role="status">MCP wird geprüft …</span><input id="mcpUrl" aria-label="MCP-Adresse" title="Streamable HTTP · nur auf diesem Rechner erreichbar" readonly hidden><button id="mcpCopy" hidden>Adresse kopieren</button>');
+  $('sharedProjectList').hidden=$('mcpMenuButton').hidden=false;
   let mcpRunning=false, mcpRequest=null;
 
   async function updateMCP(action='status') {
@@ -244,6 +240,7 @@
   $('sharedProjectList').onclick=()=>refreshList().catch(error=>status(error.message,true));
   $('sharedProjectSelect').onchange=async e=>{
     const id=e.target.value;
+    $('file-menu').hidePopover?.();
     e.target.value=project.id||'';
     await files.switchTo(async()=>{
       if(!await loadProject(id))return false;

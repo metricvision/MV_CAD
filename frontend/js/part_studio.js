@@ -842,7 +842,6 @@ const helixEscape=escapeSketch;escapeSketch=async function(){if(helixDraft||swee
 const helixSelect=selectNode;selectNode=async function(f,k){helixDraft=null;sweepDraft=null;return helixSelect(f,k);};
 const helixBound=bound3;bound3=function(){if(!mesh)return helixBound();const ps=(mesh.layouts||[]).filter(l=>l.helix).flatMap(l=>l.points);if(!ps.length)return helixBound();const b=mesh.vertices?.length?[...mesh.bounds]:[Infinity,-Infinity,Infinity,-Infinity,Infinity,-Infinity];for(const p of ps)for(let i=0;i<3;i++){b[2*i]=Math.min(b[2*i],p[i]);b[2*i+1]=Math.max(b[2*i+1],p[i]);}return b;};
 
-$('assemblyWorkspace').onclick=()=>window.open('/assembly','_blank','noopener');
 new ResizeObserver(()=>{const r=$('stage').getBoundingClientRect();W=r.width;H=r.height;DPR=Math.min(devicePixelRatio||1,2);for(const c of [overlay,glCanvas]){c.width=Math.round(W*DPR);c.height=Math.round(H*DPR)}ctx.setTransform(DPR,0,0,DPR,0,0);ctx.font='12px system-ui';draw()}).observe($('stage'));
 // Assembly editing uses a separate tab and an explicit, validated hand-off.
 const assemblyEditToken=new URLSearchParams(location.hash.slice(1)).get('assembly-edit');
