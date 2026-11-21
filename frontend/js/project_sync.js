@@ -13,22 +13,24 @@
   bar.innerHTML = '<button id="sharedProjectList">Arbeitsprojekte laden</button><select id="sharedProjectSelect" aria-label="Arbeitsprojekt auswählen" hidden></select><span id="sharedProjectState" role="status">Projekt wird geladen …</span><button id="sharedProjectReload" hidden>Serverstand laden</button><button id="sharedProjectFork" hidden>Entwurf als neues Projekt</button>';
   $('assemblyWorkspace').after(bar);
   bar.insertAdjacentHTML('beforeend','<button id="mcpToggle" disabled>MCP starten</button><span id="mcpState" role="status">MCP wird geprüft …</span><input id="mcpUrl" aria-label="MCP-Adresse" title="Streamable HTTP · nur auf diesem Rechner erreichbar" readonly hidden><button id="mcpCopy" hidden>Adresse kopieren</button>');
-  let mcpRunning=false, mcpBusy=false;
+  let mcpRunning=false, mcpRequest=null;
 
   async function updateMCP(action='status') {
-    if(mcpBusy)return;
-    mcpBusy=true;$('mcpToggle').disabled=true;
+    if(mcpRequest && (action==='status' || mcpRequest.action!=='status'))return;
+    const current=mcpRequest={action};
+    if(action!=='status')$('mcpToggle').disabled=true;
     if(action!=='status')$('mcpState').textContent=action==='start'?'MCP startet …':'MCP stoppt …';
     try {
       const result=await request('/mcp/'+action,action==='status'?undefined:{},30000);
+      if(mcpRequest!==current)return;
       mcpRunning=result.running;
       $('mcpToggle').textContent=mcpRunning?'MCP stoppen':'MCP starten';
       $('mcpUrl').value=result.url;
       $('mcpUrl').hidden=$('mcpCopy').hidden=!mcpRunning;
       $('mcpState').textContent=result.error||(mcpRunning?'MCP aktiv · lokal':'MCP aus');
       $('mcpState').className=result.error?'sync-error':'';
-    } catch(error) {$('mcpState').textContent=error.message;$('mcpState').className='sync-error';}
-    finally {mcpBusy=false;$('mcpToggle').disabled=false;}
+    } catch(error) {if(mcpRequest!==current)return;$('mcpState').textContent=error.message;$('mcpState').className='sync-error';}
+    finally {if(mcpRequest===current){mcpRequest=null;$('mcpToggle').disabled=false;}}
   }
   $('mcpToggle').onclick=()=>updateMCP(mcpRunning?'stop':'start');
   $('mcpCopy').onclick=async()=>{
