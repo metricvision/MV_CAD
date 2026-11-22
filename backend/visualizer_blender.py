@@ -1,6 +1,6 @@
 """Runs inside Blender. CAD coordinates are in mm, Blender coordinates in m."""
 import json
-from math import cos, sin
+from math import cos, pi, sin
 from pathlib import Path
 import sys
 
@@ -78,7 +78,7 @@ yaw, pitch = view["yaw"], view["pitch"]
 direction = Vector((cos(yaw)*cos(pitch), sin(yaw)*cos(pitch), sin(pitch)))
 # Update transforms and bounds after linking objects.
 bpy.context.view_layer.update()
-if settings["mat"]:
+if data["environment"]:
     # Use transformed vertices so a rotated part touches the floor at its actual lowest point.
     low = Vector((float("inf"),) * 3)
     high = -low
@@ -92,30 +92,65 @@ if settings["mat"]:
     diameter = max(.0001, (high - low).length)
     center = (low + high) / 2
     floor_z = low.z - diameter * .00002
-    # Shared edges put the grid lines and the blue tiles in a single coplanar mesh.
-    coords = [-1.5]
-    for i in range(1, 48):
-        middle = (i - 24) / 16
-        coords.extend((middle - .0007, middle + .0007))
-    coords.append(1.5)
-    verts = [(center.x + x * diameter, center.y + y * diameter, floor_z) for y in coords for x in coords]
-    n = len(coords)
-    faces = []
-    for row in range(n - 1):
-        for col in range(n - 1):
-            i = row * n + col
-            faces.append((i, i+1, i+n+1, i+n))
-    mesh = bpy.data.meshes.new("Zeichenmatte")
-    mesh.from_pydata(verts, [], faces)
-    for name, hex_color in [("Mattenblau", "#305577"), ("Raster", "#567d9a")]:
-        mat = bpy.data.materials.new(name)
-        mat.diffuse_color = linear_color(hex_color)
-        mat.roughness = .95
+    if settings["environment"] == "room":
+        # A wide window on the open side fills the shadow cast by the side wall.
+        window = bpy.data.lights.new("Weiches Fensterlicht · Raumecke", 'AREA')
+        window.shape = 'DISK'
+        window.size = 2.1 * diameter
+        window.energy = 48 * diameter**2
+        window.color = (.96, .98, 1.0)
+        source_light = bpy.data.objects.new(window.name, window)
+        scene.collection.objects.link(source_light)
+        source_light.location = center + Vector((.8, -1.35, .9))*diameter
+        point_at(source_light, center)
+    for surface in data["environment"]:
+        key = surface["anchor"]
+        if (key == "left" and cos(yaw) < 0) or (key == "back" and sin(yaw) > 0):
+            continue
+        mesh = bpy.data.meshes.new(key)
+        mesh.from_pydata(surface["vertices"], [], surface["faces"])
+        layer = mesh.color_attributes.new(name="Farbe", type='FLOAT_COLOR', domain='POINT')
+        for entry, rgb in zip(layer.data, surface["colors"]):
+            entry.color = linear_color("#%02x%02x%02x" % tuple(rgb))
+        obj = bpy.data.objects.new(key, mesh)
+        scene.collection.objects.link(obj)
+        obj.location = (low.x - .14*diameter if key == "left" else center.x,
+                        high.y + .09*diameter if key in ("left", "back") else center.y, floor_z)
+        obj.scale = (diameter,) * 3
+        obj.rotation_euler.z = yaw + pi/2 if key == "studio" else 0
+        mat = bpy.data.materials.new(key)
+        mat.use_nodes = True
         mesh.materials.append(mat)
-    for poly in mesh.polygons:
-        row, col = divmod(poly.index, n-1)
-        poly.material_index = int(bool(row % 2 or col % 2))
-    scene.collection.objects.link(bpy.data.objects.new("Zeichenmatte", mesh))
+        nodes, link = mat.node_tree.nodes, mat.node_tree.links.new
+        bsdf = nodes.get("Principled BSDF")
+        bsdf.inputs["Roughness"].default_value = .82
+        colors = nodes.new("ShaderNodeVertexColor")
+        colors.layer_name = "Farbe"
+        if key != "oak":
+            link(colors.outputs["Color"], bsdf.inputs["Base Color"])
+            continue
+        # Object coordinates stay in assembly-diagonal units, matching the viewport.
+        coords = nodes.new("ShaderNodeTexCoord").outputs["Object"]
+        brick = nodes.new("ShaderNodeTexBrick")
+        link(coords, brick.inputs["Vector"])
+        for name, value in [("Scale",1),("Brick Width",.5),("Row Height",.0625),
+                            ("Mortar Size",.00045),("Mortar Smooth",.8)]:
+            brick.inputs[name].default_value = value
+        for name, value in [("Color1","#ceb28b"),("Color2","#ba976e"),("Mortar","#927953")]:
+            brick.inputs[name].default_value = linear_color(value)
+        stretch = nodes.new("ShaderNodeVectorMath")
+        stretch.operation = 'MULTIPLY'
+        link(coords, stretch.inputs[0])
+        stretch.inputs[1].default_value = (5,240,1)
+        grain = nodes.new("ShaderNodeTexNoise")
+        link(stretch.outputs[0], grain.inputs["Vector"])
+        grain.inputs["Scale"].default_value = 1
+        mix = nodes.new("ShaderNodeMixRGB")
+        mix.blend_type = 'MULTIPLY'
+        mix.inputs[0].default_value = .22
+        link(brick.outputs["Color"], mix.inputs[1])
+        link(grain.outputs["Fac"], mix.inputs[2])
+        link(mix.outputs[0], bsdf.inputs["Base Color"])
     bpy.context.view_layer.update()
 depth = max((obj.matrix_world @ Vector(corner) - target).length for obj in scene.objects
             if obj.type == 'MESH' for corner in obj.bound_box) + .1

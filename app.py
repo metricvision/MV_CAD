@@ -60,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
             self.check_origin();path=urlsplit(self.path).path
             if path.startswith("/progress/"):
                 return self.json_reply(self.server.progress.get(path.removeprefix("/progress/")))
+            if path=="/visualizer/environments":
+                from backend.visualizer_environment import environments
+                return self.json_reply(environments())
             if path=="/session":
                 return self.json_reply({"token":self.server.token,"default_project":"default","version":"0.23-mcp"})
             if path=="/health":return self.json_reply({"ok":True,"application":"MetricCAD","version":"0.23-mcp"})

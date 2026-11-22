@@ -11,6 +11,7 @@ import tempfile
 import threading
 
 from backend.assembly.assembly import prepare
+from backend.visualizer_environment import environment_surfaces
 from backend.cad_service import atomic_write
 from backend.geometry.engine import build_progress
 
@@ -46,10 +47,10 @@ def prepare_scene(doc, lock):
     settings = doc.get("renderSettings", {})
     samples = settings.get("samples", 24)
     width = settings.get("width", 1280)
-    mat_enabled = settings.get("mat", True)
+    environment = settings.get("environment", "none" if settings.get("mat") is False else "studio")
     if type(samples) is not int or not 1 <= samples <= 1024:
         raise ValueError("Sampleanzahl muss zwischen 1 und 1024 liegen.")
-    if type(width) is not int or width not in (640, 1280, 1920, 3840) or type(mat_enabled) is not bool:
+    if type(width) is not int or width not in (640, 1280, 1920, 3840) or environment not in ("studio","room","none"):
         raise ValueError("Ungültige Rendereinstellungen.")
     lights = []
     for light in doc["lights"]:
@@ -80,7 +81,8 @@ def prepare_scene(doc, lock):
     if not objects:
         raise ValueError("Baugruppe ist leer")
     return dict(camera=view, lights=lights, meshes=meshes, objects=objects,
-                settings=dict(samples=samples, width=width, mat=mat_enabled))
+                environment=environment_surfaces(environment),
+                settings=dict(samples=samples, width=width, environment=environment))
 
 
 def blender_path(directory):

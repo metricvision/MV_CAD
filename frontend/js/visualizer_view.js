@@ -1,5 +1,5 @@
 // Camera width is the horizontal extent of the 16:9 render frame, in millimetres.
-function sceneViewport(canvas, current, select, changeCamera) {
+function sceneViewport(canvas, current, select, changeCamera, environments) {
     const gl = canvas.getContext('webgl', {antialias:true});
     if (!gl) throw Error('Für die Vorschau wird WebGL benötigt.');
     const program = gl.createProgram();
@@ -12,32 +12,51 @@ function sceneViewport(canvas, current, select, changeCamera) {
         gl.deleteShader(s);
     }
     shader(gl.VERTEX_SHADER, `
-        attribute vec3 pos, normal;
+        attribute vec3 pos, normal, tint;
+        uniform bool environmentPass;
+        uniform vec3 origin, basis;
+        varying vec3 surfaceColor;
+        varying vec2 localXY;
         uniform vec3 center, right, up, eye, scale;
         varying vec3 point, n;
         void main() {
-            vec3 p = pos-center;
+            vec3 world=pos;
+            n=normal;
+            if(environmentPass){
+                mat2 rotation=mat2(basis.x,basis.y,-basis.y,basis.x);
+                world=origin+basis.z*vec3(rotation*pos.xy,pos.z);
+                n.xy=rotation*normal.xy;
+            }
+            localXY=pos.xy;surfaceColor=tint;
+            vec3 p = world-center;
             gl_Position=vec4(vec3(dot(p,right),dot(p,up),-dot(p,eye))*scale,1.);
-            point=pos*.001; n=normal;
+            point=world*.001;
         }`);
     shader(gl.FRAGMENT_SHADER, `
         precision highp float;
         varying vec3 point,n;
         uniform vec3 base, eye, lightPos[8], lightDir[8], lightRgb[8];
         uniform float roughness, metal, opacity, lightSize[8];
-        uniform vec3 grid;
-        uniform bool floorPass;
+        varying vec3 surfaceColor;
+        varying vec2 localXY;
+        uniform bool environmentPass, oak, roomFill;
         uniform int count;
         uniform bool picking;
         void main(){
             if(picking){gl_FragColor=vec4(base,1.);return;}
             vec3 N=faceforward(normalize(n),-eye,normalize(n));
-            vec3 albedo=base;
-            if(floorPass){
-                vec2 cell=abs(fract((point.xy-grid.xy)/grid.z+.5)-.5);
-                albedo=mix(base,vec3(.093,.205,.323),1.-smoothstep(.006,.017,min(cell.x,cell.y)));
+            vec3 albedo=environmentPass?surfaceColor:base;
+            if(oak){
+                vec2 board=localXY*vec2(2.,16.);
+                board.x+=.5*mod(floor(board.y),2.);
+                vec2 joint=min(fract(board),1.-fract(board));
+                float grain=sin(750.*localXY.y+3.*sin(localXY.x*22.));
+                albedo*=.96+.04*grain;
+                if(joint.x<.002||joint.y<.012)albedo*=.82;
             }
             vec3 paint=albedo*.18;
+            if(roomFill)
+                paint+=albedo*(.06+.17*max(dot(N,normalize(vec3(.8,-1.35,.9))),0.));
             for(int i=0;i<8;i++){
                 if(i>=count)break;
                 vec3 delta=lightPos[i]-point;
@@ -61,13 +80,39 @@ function sceneViewport(canvas, current, select, changeCamera) {
         gl.vertexAttribPointer(loc,3,gl.FLOAT,false,24,index*12);
     }
     const u={};
-    for(const name of ['center','right','up','eye','scale','base','roughness','metal','opacity','grid','floorPass','count','picking','lightPos','lightDir','lightRgb','lightSize'])
+    for(const name of ['center','right','up','eye','scale','base','roughness','metal','opacity','basis','origin','environmentPass','oak','roomFill','count','picking','lightPos','lightDir','lightRgb','lightSize'])
         u[name]=gl.getUniformLocation(program,name.startsWith('light')?name+'[0]':name);
     const rgb=color=>[1,3,5].map(k=>parseInt(color.slice(k,k+2),16)/255);
     const sub=(a,b)=>a.map((v,i)=>v-b[i]);
     const unit=a=>a.map(v=>v/(Math.hypot(...a)||1));
     const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
-    let ranges=[],center=[0,0,0],diameter=100,floorStart=0,drag=null;
+    const envBuffer=gl.createBuffer(), envVertices=[], surfaces={};
+    for(const [mode,meshes] of Object.entries(environments)){
+        surfaces[mode]=meshes.map(mesh=>{
+            const start=envVertices.length/9;
+            for(const [a,b,c,d] of mesh.faces){
+                const n=unit(cross(sub(mesh.vertices[b],mesh.vertices[a]),sub(mesh.vertices[c],mesh.vertices[a])));
+                for(const i of [a,b,c,a,c,d])
+                    envVertices.push(...mesh.vertices[i],...n,...mesh.colors[i].map(v=>(v/255)**2.2));
+            }
+            return {anchor:mesh.anchor,start,count:envVertices.length/9-start};
+        });
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER,envBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(envVertices),gl.STATIC_DRAW);
+    const attrs=['pos','normal','tint'].map(k=>gl.getAttribLocation(program,k));
+    function bindEnvironment(on){
+        gl.bindBuffer(gl.ARRAY_BUFFER,on?envBuffer:buffer);
+        const stride=on?36:24;
+        gl.vertexAttribPointer(attrs[0],3,gl.FLOAT,false,stride,0);
+        gl.vertexAttribPointer(attrs[1],3,gl.FLOAT,false,stride,12);
+        if(on){
+            gl.enableVertexAttribArray(attrs[2]);
+            gl.vertexAttribPointer(attrs[2],3,gl.FLOAT,false,stride,24);
+        }else gl.disableVertexAttribArray(attrs[2]);
+        gl.uniform1i(u.environmentPass,on);
+    }
+    let ranges=[],center=[0,0,0],diameter=100,lowCorner=[0,0,0],backY=0,drag=null;
     function load(model,data) {
         const vertices=[], next=[], low=[Infinity,Infinity,Infinity], high=low.map(()=>-Infinity);
         for(const item of model?.instances||[]) {
@@ -89,11 +134,8 @@ function sceneViewport(canvas, current, select, changeCamera) {
         if(model && !vertices.length) throw Error('Baugruppe enthält keine darstellbaren Flächen.');
         center=model?low.map((v,i)=>(v+high[i])/2):[0,0,0];
         diameter=model?Math.max(.1,Math.hypot(...sub(high,low))):100;
-        floorStart=vertices.length/6;
-        if(model){
-            for(const [x,y] of [[-1,-1],[1,-1],[1,1],[-1,-1],[1,1],[-1,1]])
-                vertices.push(center[0]+x*1.5*diameter,center[1]+y*1.5*diameter,low[2]-.00002*diameter,0,0,1);
-        }
+        lowCorner=low;backY=high[1];
+        gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
         ranges=next;
         gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(vertices),gl.STATIC_DRAW);
         return {center:[...center],diameter,height:model?high[2]-low[2]:0};
@@ -104,7 +146,7 @@ function sceneViewport(canvas, current, select, changeCamera) {
         return {eye,right,up:cross(eye,right)};
     }
     function draw(picking=false){
-        const {camera,lights,material,mat}=current();
+        const {camera,lights,material,environment}=current();
         const ratio=Math.min(devicePixelRatio||1,2);
         const w=Math.max(1,Math.round(canvas.clientWidth*ratio)),h=Math.max(1,Math.round(canvas.clientHeight*ratio));
         if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
@@ -113,8 +155,9 @@ function sceneViewport(canvas, current, select, changeCamera) {
         gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
         if(!camera)return;
         gl.enable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
-        const scale=[2/camera.width,2*w/(h*camera.width),.9/(diameter*(mat?3:1)+Math.hypot(...sub(camera.center,center)))];
+        const scale=[2/camera.width,2*w/(h*camera.width),.9/(diameter*(environment==='none'?1:55)+Math.hypot(...sub(camera.center,center)))];
         for(const [name,value] of Object.entries({...axes(camera),center:camera.center,scale}))gl.uniform3fv(u[name],value);
+        gl.uniform1i(u.roomFill,environment==='room');
         gl.uniform1i(u.picking,picking);gl.uniform1i(u.count,lights.length);
         if(lights.length){
             gl.uniform3fv(u.lightPos,lights.flatMap(l=>l.position.map(v=>v*.001)));
@@ -123,14 +166,25 @@ function sceneViewport(canvas, current, select, changeCamera) {
             gl.uniform1fv(u.lightSize,lights.map(l=>l.type==='point'?-l.size*.001:l.size*.0005));
         }
         gl.uniform1f(u.opacity,1);
-        if(mat){
-            gl.uniform1i(u.floorPass,true);
-            gl.uniform3fv(u.base,picking?[0,0,0]:[.030,.091,.185]);
-            gl.uniform3fv(u.grid,[center[0]*.001,center[1]*.001,diameter*.001/16]);
+        if(environment!=='none'){
+            bindEnvironment(true);
+            gl.uniform3fv(u.base,[0,0,0]);
             gl.uniform1f(u.roughness,.95);gl.uniform1f(u.metal,0);
-            gl.drawArrays(gl.TRIANGLES,floorStart,6);
+            for(const surface of surfaces[environment]){
+                const key=surface.anchor;
+                if((key==='back'&&Math.sin(camera.yaw)>0)||(key==='left'&&Math.cos(camera.yaw)<0))continue;
+                const angle=key==='studio'?camera.yaw+Math.PI/2:0;
+                const x=key==='left'?lowCorner[0]-.14*diameter:center[0];
+                const y=(key==='back'||key==='left')?backY+.09*diameter:center[1];
+                gl.uniform3fv(u.origin,[x,y,lowCorner[2]-.00002*diameter]);
+                gl.uniform3fv(u.basis,[Math.cos(angle),Math.sin(angle),diameter]);
+                gl.uniform1i(u.oak,key==='oak');
+                if(key==='floor'){gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(-1,-1);}
+                gl.drawArrays(gl.TRIANGLES,surface.start,surface.count);
+                gl.disable(gl.POLYGON_OFFSET_FILL);
+            }
         }
-        gl.uniform1i(u.floorPass,false);
+        bindEnvironment(false);gl.uniform1i(u.oak,false);
         const eye=axes(camera).eye, transparent=[];
         function paint(range,m,i){
             gl.uniform3fv(u.base,picking?[(i+1)/255,0,0]:rgb(m.color).map(v=>v**2.2));

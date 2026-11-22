@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const defaultSettings=()=>({samples:24,width:1280,mat:true});
+const defaultSettings=()=>({samples:24,width:1280,environment:'studio'});
 const emptyScene=()=>({format:'MetricCAD-visualizer',version:1,model:null,materials:{},overrides:{},lights:[],cameras:[],activeCamera:null,renderSettings:defaultSettings()});
 let doc=emptyScene(), selection=null, bounds=null, view=null, rendering=false;
 const activeCamera=()=>doc.cameras.find(c=>c.id===doc.activeCamera);
@@ -10,7 +10,7 @@ const vec=v=>Array.isArray(v)&&v.length===3&&v.every(x=>inRange(x,-1e9,1e9));
 const baseMaterial=i=>({color:validColor(i.color)?i.color:'#bfc9ce',roughness:.5,metallic:0});
 const lookup=(map,id)=>Object.hasOwn(map,id)?map[id]:undefined;
 const material=i=>lookup(doc.overrides,i.id)||lookup(doc.materials,i.part)||baseMaterial(i);
-const current=()=>({camera:activeCamera(),lights:doc.lights,mat:doc.renderSettings.mat,material});
+const current=()=>({camera:activeCamera(),lights:doc.lights,environment:doc.renderSettings.environment,material});
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function select(type,id){selection={type,id};tree();properties();view?.draw();}
 function validate(s){
@@ -19,7 +19,7 @@ function validate(s){
         arr.every(x=>x&&typeof x.id==='string'&&typeof x.name==='string'&&test(x));
     if(s?.format!=='MetricCAD-visualizer'||s.version!==1||
         !Number.isInteger(s.renderSettings?.samples)||!inRange(s.renderSettings.samples,1,1024)||
-        ![640,1280,1920,3840].includes(s.renderSettings.width)||typeof s.renderSettings.mat!=='boolean'||
+        ![640,1280,1920,3840].includes(s.renderSettings.width)||!['studio','room','none'].includes(s.renderSettings.environment)||
         ![s.materials,s.overrides].every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&Object.values(m).every(mat))||
         !entries(s.cameras,100,c=>vec(c.center)&&inRange(c.yaw,-1e6,1e6)&&inRange(c.pitch,-1.57,1.57)&&inRange(c.width,.01,1e9))||
         !entries(s.lights,8,l=>vec(l.position)&&(l.type==='point'||((l.type??'area')==='area'&&vec(l.target)))&&validColor(l.color)&&inRange(l.size,.1,1e7)&&inRange(l.power,0,1e7))||
@@ -30,7 +30,11 @@ async function build(model){
     if(model?.format!=='MetricCAD-assembly'||!model.instances?.length)throw Error('Bitte eine Baugruppe mit Bauteilen wählen.');
     const r=await fetch('/assembly/build',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(model)});
     const data=await r.json();if(!r.ok)throw Error(data.error||'Baugruppe konnte nicht geladen werden.');
-    view??=sceneViewport($('view'),current,i=>select('part',i.id),()=>{if(selection?.type==='camera')properties();});
+    if(!view){
+        const response=await fetch('/visualizer/environments');
+        if(!response.ok)throw Error('Umgebungen konnten nicht geladen werden.');
+        view=sceneViewport($('view'),current,i=>select('part',i.id),()=>{if(selection?.type==='camera')properties();},await response.json());
+    }
     return view.load(model,data);
 }
 function fit(c){c.center=[...bounds.center];c.width=bounds.diameter*2;}
@@ -45,6 +49,10 @@ function newLight(s,b,type='area'){
 async function replace(value){
     const s=value??emptyScene();
     if(s.renderSettings===undefined)s.renderSettings=defaultSettings();
+    if(s.renderSettings && s.renderSettings.environment===undefined){
+        s.renderSettings.environment=s.renderSettings.mat===false?'none':'studio';
+        delete s.renderSettings.mat;
+    }
     validate(s);
     const next=s.model?await build(s.model):null;
     if(!s.model)view?.load(null,null);
@@ -135,9 +143,11 @@ function properties(){
             element('option',w+' × '+(w*9/16),size).value=w;
         }
         size.value=settings.width;size.onchange=()=>settings.width=Number(size.value);
-        const toggle=element('input',null,element('label','Blaue Rastermatte',panel));
-        toggle.type='checkbox';toggle.checked=settings.mat;
-        toggle.onchange=()=>{settings.mat=toggle.checked;view.draw();};
+        const environment=element('select',null,element('label','Umgebung',panel));
+        for(const [key,label] of [['studio','Zeichenstudio'],['room','Raumecke'],['none','Ohne Umgebung']])
+            element('option',label,environment).value=key;
+        environment.value=settings.environment;
+        environment.onchange=()=>{settings.environment=environment.value;view.draw();};
         return;
     }
     if(type==='part'){
