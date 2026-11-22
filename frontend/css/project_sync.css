@@ -13,3 +13,10 @@
 #mcpState{color:#8ccebb}
 .cad-header .sync-error{color:#ffd39a}
 #mcpUrl{width:225px;margin:0}
+
+@media screen and (forced-colors: none) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #60798c #14202d;
+  }
+}
