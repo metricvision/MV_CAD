@@ -258,10 +258,15 @@ function measure(parent,a,b,at,kind,value){
         const t=(at[0]-p[0])*n[0]+(at[1]-p[1])*n[1];return [p[0]+t*n[0],p[1]+t*n[1]];
     };
     const aa=foot(a),bb=foot(b);
-    for(const [p,q,other] of [[a,aa,bb],[b,bb,aa]]){
+    const arrowLength=1.6; // Millimetres on paper.
+    const span=(bb[0]-aa[0])*u[0]+(bb[1]-aa[1])*u[1];
+    const outside=Math.abs(span)<2*arrowLength+2;
+    const direction=span<0?-1:1;
+    for(const [p,q,inward] of [[a,aa,direction],[b,bb,-direction]]){
         drawLine(parent,p,q,'#516c78',.14);
-        const sign=(other[0]-q[0])*u[0]+(other[1]-q[1])*u[1]>=0?1:-1;
-        const back=q.map((v,i)=>v+1.6*sign*u[i]);
+        const sign=outside?-inward:inward;
+        const back=q.map((v,i)=>v+arrowLength*sign*u[i]);
+        if(outside)drawLine(parent,q,q.map((v,i)=>v+2*arrowLength*sign*u[i]));
         svg('polygon',parent,{points:[q,back.map((v,i)=>v+.45*n[i]),back.map((v,i)=>v-.45*n[i])].map(p=>p.join(',')).join(' '),fill:'#25303b'});
     }
     drawLine(parent,aa,bb);
