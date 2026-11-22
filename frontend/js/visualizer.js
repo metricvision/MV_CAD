@@ -190,10 +190,10 @@ $('camera').onclick=()=>{
     doc.cameras.push(c);doc.activeCamera=c.id;select('camera',c.id);
 };
 $('fit').onclick=()=>{fit(activeCamera());view.draw();properties();};
-async function visualizerRequest(endpoint,body){
+async function visualizerRequest(endpoint,body,headers={}){
     const session=await (await fetch('/session')).json();
     const response=await fetch('/visualizer/'+endpoint,{method:'POST',
-        headers:{'Content-Type':'application/json','X-MetricCAD-Token':session.token},body});
+        headers:{'Content-Type':'application/json','X-MetricCAD-Token':session.token,...headers},body});
     if(!response.ok)throw Error((await response.json()).error);
     return response;
 }
@@ -231,17 +231,95 @@ $('pathForm').onsubmit=e=>{
         status(result.path?'Blender-Pfad gespeichert.':'Automatische Blender-Suche aktiviert.');
     });
 };
+// Keep the exported PNG untouched. All navigation acts on its displayed copy.
+const viewport=$('imageViewport'), image=$('image');
+let zoom=1, panX=0, panY=0, imageDrag=null;
+function positionImage(){
+    const clamp=(pos,size)=>{
+        const extra=size*(zoom-1);
+        return extra<0?-extra/2:Math.max(-extra,Math.min(0,pos));
+    };
+    panX=clamp(panX,viewport.clientWidth);panY=clamp(panY,viewport.clientHeight);
+    image.style.transform='translate('+panX+'px,'+panY+'px) scale('+zoom+')';
+    if(image.naturalWidth)
+        $('imageScale').value=Math.round(100*zoom*viewport.clientWidth*devicePixelRatio/image.naturalWidth)+' %';
+}
+function fitImage(){zoom=1;panX=panY=0;positionImage();}
+function zoomImage(value,x,y){
+    panX=x-(x-panX)*value/zoom;panY=y-(y-panY)*value/zoom;
+    zoom=value;positionImage();
+}
+$('imageFit').onclick=fitImage;
+$('imageActual').onclick=()=>zoomImage(image.naturalWidth/(viewport.clientWidth*devicePixelRatio),
+    viewport.clientWidth/2,viewport.clientHeight/2);
+viewport.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const rect=viewport.getBoundingClientRect(), pixels=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?rect.height:1);
+    const actual=image.naturalWidth/(rect.width*devicePixelRatio);
+    zoomImage(Math.min(Math.max(16,actual*8),Math.max(Math.min(1,actual),zoom*Math.exp(-pixels*.0015))),
+        e.clientX-rect.left,e.clientY-rect.top);
+},{passive:false});
+viewport.onpointerdown=e=>{
+    if(imageDrag||![0,1].includes(e.button))return;
+    e.preventDefault();viewport.setPointerCapture(e.pointerId);
+    imageDrag={id:e.pointerId,x:e.clientX,y:e.clientY};
+};
+viewport.onpointermove=e=>{
+    if(imageDrag?.id!==e.pointerId)return;
+    panX+=e.clientX-imageDrag.x;panY+=e.clientY-imageDrag.y;
+    imageDrag.x=e.clientX;imageDrag.y=e.clientY;positionImage();
+};
+viewport.onpointerup=viewport.onpointercancel=viewport.onlostpointercapture=()=>{imageDrag=null;};
+viewport.onauxclick=e=>{if(e.button===1)e.preventDefault();};
+new ResizeObserver(()=>{if($('result').open)positionImage();}).observe(viewport);
+
+function elapsed(start){
+    const sec=Math.floor((performance.now()-start)/1000);
+    return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0');
+}
+function watchRender(id,start){
+    const bar=$('renderProgress'),controller=new AbortController();
+    let timer,stage=null;
+    bar.removeAttribute('value');bar.hidden=false;
+    async function poll(){
+        try{
+            const response=await fetch('/progress/'+id,{signal:controller.signal,cache:'no-store'});
+            if(response.ok){
+                const next=await response.json();
+                if(next?.stage)stage=next;
+            }
+        }catch{/* The render request reports failures independently. */}
+        if(controller.signal.aborted)return;
+        let message='Szene vorbereiten …';
+        if(stage?.stage==='sampling'){
+            bar.max=stage.total;bar.value=stage.sample;
+            message='Cycles · '+stage.sample+'/'+stage.total+' Samples ('+Math.round(100*stage.sample/stage.total)+' %)';
+            if(stage.remaining)message+=' · Rest ca. '+stage.remaining.replace(/\.\d+$/,'');
+        }else{
+            bar.removeAttribute('value');
+            if(stage?.stage==='starting')message='Cycles wird vorbereitet …';
+            if(stage?.stage==='saving')message='Renderbild speichern …';
+        }
+        status(message+' · Verstrichen '+elapsed(start));
+        timer=setTimeout(poll,500);
+    }
+    poll();
+    return ()=>{controller.abort();clearTimeout(timer);bar.hidden=true;};
+}
 $('render').onclick=async()=>{
     if(rendering)return;
-    rendering=true;tree();status('Cycles rendert die aktuelle Kamera …');
+    rendering=true;tree();status('Szene vorbereiten …');
     const width=doc.renderSettings.width,body=JSON.stringify(doc);
+    const id=crypto.randomUUID(),start=performance.now(),stop=watchRender(id,start);
     try{
-        const r=await visualizerRequest('render',body);
+        const r=await visualizerRequest('render',body,{'X-CAD-Progress':id});
         const url=URL.createObjectURL(await r.blob());
-        $('image').src=url;$('download').href=url;$('result').showModal();status('Rendering fertig · '+width+' × '+(width*9/16)+' Pixel.');
+        image.src=url;$('download').href=url;$('result').showModal();fitImage();
+        status('Rendering fertig · '+width+' × '+(width*9/16)+' Pixel · Dauer '+elapsed(start));
     }catch(e){status(e.message,true);}
-    finally{rendering=false;tree();}
+    finally{stop();rendering=false;tree();}
 };
-$('result').onclose=()=>{URL.revokeObjectURL($('image').src);$('image').removeAttribute('src');$('download').removeAttribute('href');};
+image.onload=fitImage;
+$('result').onclose=()=>{imageDrag=null;URL.revokeObjectURL(image.src);image.removeAttribute('src');$('download').removeAttribute('href');};
 $('close').onclick=()=>$('result').close();
 resetUI();

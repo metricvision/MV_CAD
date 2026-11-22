@@ -12,6 +12,7 @@ import threading
 
 from backend.assembly.assembly import prepare
 from backend.cad_service import atomic_write
+from backend.geometry.engine import build_progress
 
 _render_slot = threading.Lock()
 
@@ -126,6 +127,47 @@ root.destroy()
     return {"path": value}
 
 
+_sample_status = re.compile(r"\bsamples?\s+(\d+)\s*/\s*(\d+)", re.I)
+_remaining_time = re.compile(r"\bRemaining:\s*([\d:.]+)", re.I)
+
+
+def render_status(line):
+    match = _sample_status.search(line)
+    if match:
+        sample, total = map(int, match.groups())
+        if 0 <= sample <= total and total:
+            remaining = _remaining_time.search(line)
+            return {"stage": "sampling", "sample": sample, "total": total,
+                    "remaining": remaining[1] if remaining else None}
+    if " | Finished" in line or "Saved:" in line:
+        return {"stage": "saving"}
+    return None
+
+
+def run_blender(command, report):
+    tail = ""
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, encoding="utf-8", errors="replace") as process:
+        def read_output():
+            nonlocal tail
+            for line in process.stdout:
+                tail = (tail + line)[-1000:]
+                if report and (stage := render_status(line)):
+                    report(stage)
+
+        reader = threading.Thread(target=read_output)
+        reader.start()
+        try:
+            process.wait(timeout=600)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            reader.join()
+        if process.returncode:
+            raise ValueError("Cycles-Render fehlgeschlagen. " + tail.strip()[-400:])
+
+
 def render_png(doc, lock, directory=None):
     configured = blender_path(directory) if directory is not None else ""
     blender = checked_blender(configured) if configured else shutil.which(os.environ.get("METRICCAD_BLENDER") or "blender")
@@ -142,10 +184,12 @@ def render_png(doc, lock, directory=None):
             script = Path(__file__).with_name("visualizer_blender.py")
             command = [blender, "-b", "--factory-startup", "--disable-autoexec", "-t", "4",
                        "--python-exit-code", "1", "--python", str(script), "--", str(source), str(output)]
-            result = subprocess.run(command, capture_output=True, timeout=600)
-            if result.returncode or not output.is_file():
-                message = (result.stderr or result.stdout).decode(errors="replace").strip()
-                raise ValueError("Cycles-Render fehlgeschlagen. " + message[-400:])
+            report = build_progress.get()
+            if report:
+                report({"stage": "starting"})
+            run_blender(command, report)
+            if not output.is_file():
+                raise ValueError("Blender hat kein PNG erzeugt.")
             return output.read_bytes()
     except subprocess.TimeoutExpired as exc:
         raise ValueError("Renderzeit von zehn Minuten überschritten.") from exc
