@@ -17,6 +17,9 @@ from backend.geometry.engine import build_progress
 
 _render_slot = threading.Lock()
 
+# Procedural surface textures understood by visualizer_blender.py.
+TEXTURES = ("leimholz-fichte", "spanplatte-weiss")
+
 
 def finite(value, low, high):
     if type(value) not in (float, int) or not math.isfinite(value) or not low <= value <= high:
@@ -74,10 +77,14 @@ def prepare_scene(doc, lock):
         mat = doc["overrides"].get(item["id"], doc["materials"].get(key))
         if mat is None:
             mat = dict(color=item.get("color") or "#bfc9ce", roughness=.5, metallic=0)
+        texture = mat.get("texture")
+        if texture is not None and texture not in TEXTURES:
+            raise ValueError("Unbekannte Materialtextur")
         objects.append(dict(part=key, transform=result["transforms"][item["id"]],
                             color=color(mat["color"]), roughness=finite(mat["roughness"], 0, 1),
                             metallic=finite(mat["metallic"], 0, 1),
-                            transmission=finite(mat.get("transmission", 0), 0, 1)))
+                            transmission=finite(mat.get("transmission", 0), 0, 1),
+                            texture=texture))
     if not objects:
         raise ValueError("Baugruppe ist leer")
     return dict(camera=view, lights=lights, meshes=meshes, objects=objects,

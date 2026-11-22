@@ -9,12 +9,18 @@ const inRange=(v,min,max)=>Number.isFinite(v)&&v>=min&&v<=max;
 const vec=v=>Array.isArray(v)&&v.length===3&&v.every(x=>inRange(x,-1e9,1e9));
 const baseMaterial=i=>({color:validColor(i.color)?i.color:'#bfc9ce',roughness:.5,metallic:0});
 const lookup=(map,id)=>Object.hasOwn(map,id)?map[id]:undefined;
+// Procedural surfaces rendered by Blender; the viewport shows their base colour.
+const SURFACES={
+    '':{label:'Einfarbig'},
+    'leimholz-fichte':{label:'Leimholz Fichte',texture:'leimholz-fichte',color:'#e2c999',roughness:.62,metallic:0,transmission:0},
+    'spanplatte-weiss':{label:'Spanplatte weiß',texture:'spanplatte-weiss',color:'#f3f3f0',roughness:.35,metallic:0,transmission:0}};
 const material=i=>lookup(doc.overrides,i.id)||lookup(doc.materials,i.part)||baseMaterial(i);
 const current=()=>({camera:activeCamera(),lights:doc.lights,environment:doc.renderSettings.environment,material});
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function select(type,id){selection={type,id};tree();properties();view?.draw();}
 function validate(s){
-    const mat=m=>m&&validColor(m.color)&&inRange(m.roughness,0,1)&&inRange(m.metallic,0,1)&&inRange(m.transmission??0,0,1);
+    const mat=m=>m&&validColor(m.color)&&inRange(m.roughness,0,1)&&inRange(m.metallic,0,1)&&inRange(m.transmission??0,0,1)&&
+        (m.texture===undefined||(m.texture!==''&&Object.hasOwn(SURFACES,m.texture)));
     const entries=(arr,max,test)=>Array.isArray(arr)&&arr.length<=max&&new Set(arr.map(x=>x?.id)).size===arr.length&&
         arr.every(x=>x&&typeof x.id==='string'&&typeof x.name==='string'&&test(x));
     if(s?.format!=='MetricCAD-visualizer'||s.version!==1||
@@ -161,6 +167,15 @@ function properties(){
             properties();view.draw();
         };
         const set=(key,v)=>write(override?doc.overrides:doc.materials,override?id:item.part,{...m,[key]:v});
+        const surface=element('select',null,element('label','Oberfläche (Render)',panel));
+        for(const [key,preset] of Object.entries(SURFACES))element('option',preset.label,surface).value=key;
+        surface.value=m.texture??'';
+        surface.onchange=()=>{
+            const {label,...values}=SURFACES[surface.value],next={...m,...values};
+            if(!surface.value)delete next.texture;
+            write(override?doc.overrides:doc.materials,override?id:item.part,next);
+            properties();view.draw();
+        };
         input('Farbe',m.color,'color',v=>set('color',v));
         input('Rauheit (0–1)',m.roughness,'number',v=>set('roughness',v),[0,1]);
         button('Klares Glas',()=>{

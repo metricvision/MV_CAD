@@ -19,6 +19,98 @@ def point_at(obj, target):
         obj.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
 
 
+def grain_axes(mesh):
+    """Local axes ordered (length, width, thickness) from the part's own extents."""
+    extents = [max(v.co[i] for v in mesh.vertices) - min(v.co[i] for v in mesh.vertices) for i in range(3)]
+    return sorted(range(3), key=lambda i: -extents[i])
+
+
+def textured_material(kind, name, mesh, base_hex, roughness):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes, link = material.node_tree.nodes, material.node_tree.links.new
+    bsdf = nodes.get("Principled BSDF")
+    bsdf.inputs["Roughness"].default_value = roughness
+    coords = nodes.new("ShaderNodeTexCoord").outputs["Object"]
+    if kind == "spanplatte-weiss":
+        # Melamine surface: uniform white with a very fine, barely visible relief.
+        bsdf.inputs["Base Color"].default_value = linear_color(base_hex)
+        fine = nodes.new("ShaderNodeTexNoise")
+        fine.inputs["Scale"].default_value = 2500
+        link(coords, fine.inputs["Vector"])
+        bump = nodes.new("ShaderNodeBump")
+        bump.inputs["Strength"].default_value = .015
+        link(fine.outputs["Fac"], bump.inputs["Height"])
+        link(bump.outputs["Normal"], bsdf.inputs["Normal"])
+        return material
+    # Leimholz Fichte: glued lamellae along the longest board edge.
+    length, width, thick = grain_axes(mesh)
+    split = nodes.new("ShaderNodeSeparateXYZ")
+    link(coords, split.inputs["Vector"])
+    axis = [split.outputs[i] for i in range(3)]
+    def math(op, a, b=None, value=None):
+        node = nodes.new("ShaderNodeMath")
+        node.operation = op
+        link(a, node.inputs[0]) if not isinstance(a, (int, float)) else setattr(node.inputs[0], "default_value", a)
+        if b is not None:
+            link(b, node.inputs[1])
+        elif value is not None:
+            node.inputs[1].default_value = value
+        return node.outputs[0]
+    lamella = math('FLOOR', math('DIVIDE', axis[width], value=.042))
+    rand = nodes.new("ShaderNodeTexWhiteNoise")
+    rand.noise_dimensions = '1D'
+    link(lamella, rand.inputs["W"])
+    rand2 = nodes.new("ShaderNodeTexWhiteNoise")
+    rand2.noise_dimensions = '1D'
+    link(math('ADD', lamella, value=17.3), rand2.inputs["W"])
+    # Ring pattern: bands across the width, shifted per lamella, along the length.
+    grain = nodes.new("ShaderNodeCombineXYZ")
+    link(axis[length], grain.inputs["X"])
+    link(math('ADD', axis[width], math('MULTIPLY', rand.outputs["Value"], value=.5)), grain.inputs["Y"])
+    link(axis[thick], grain.inputs["Z"])
+    wave = nodes.new("ShaderNodeTexWave")
+    wave.bands_direction = 'Y'
+    wave.inputs["Scale"].default_value = 30
+    wave.inputs["Distortion"].default_value = 5
+    wave.inputs["Detail"].default_value = 3
+    wave.inputs["Detail Scale"].default_value = .25
+    link(grain.outputs["Vector"], wave.inputs["Vector"])
+    rings = math('POWER', wave.outputs["Fac"], value=3)
+    # Long streaks: noise stretched along the grain.
+    stretch = nodes.new("ShaderNodeCombineXYZ")
+    link(math('MULTIPLY', axis[length], value=2), stretch.inputs["X"])
+    link(math('MULTIPLY', axis[width], value=90), stretch.inputs["Y"])
+    link(math('MULTIPLY', axis[thick], value=90), stretch.inputs["Z"])
+    streak = nodes.new("ShaderNodeTexNoise")
+    streak.inputs["Scale"].default_value = 1.5
+    streak.inputs["Detail"].default_value = 4
+    link(stretch.outputs["Vector"], streak.inputs["Vector"])
+    # Colours: each lamella between a pale and a warmer spruce tone.
+    tone = nodes.new("ShaderNodeMix")
+    tone.data_type = 'RGBA'
+    link(rand2.outputs["Value"], tone.inputs[0])
+    tone.inputs[6].default_value = linear_color("#e6c995")
+    tone.inputs[7].default_value = linear_color("#d4ae72")
+    shade = nodes.new("ShaderNodeMix")
+    shade.data_type = 'RGBA'
+    shade.blend_type = 'MULTIPLY'
+    link(math('MULTIPLY', streak.outputs["Fac"], value=.35), shade.inputs[0])
+    link(tone.outputs[2], shade.inputs[6])
+    shade.inputs[7].default_value = linear_color("#cfa86c")
+    late = nodes.new("ShaderNodeMix")
+    late.data_type = 'RGBA'
+    link(math('MULTIPLY', rings, value=.8), late.inputs[0])
+    link(shade.outputs[2], late.inputs[6])
+    late.inputs[7].default_value = linear_color("#a8753a")
+    link(late.outputs[2], bsdf.inputs["Base Color"])
+    bump = nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = .04
+    link(rings, bump.inputs["Height"])
+    link(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    return material
+
+
 source, output = sys.argv[-2:]
 data = json.loads(Path(source).read_text(encoding="utf-8"))
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -43,6 +135,12 @@ for item in data["objects"]:
     transform = Matrix(item["transform"])
     transform.translation *= .001
     obj.matrix_world = transform
+    if item.get("texture"):
+        # Grain direction depends on each part, so textured materials are per object.
+        obj.material_slots[0].link = 'OBJECT'
+        obj.material_slots[0].material = textured_material(
+            item["texture"], item["part"], meshes[item["part"]], item["color"], item["roughness"])
+        continue
     key = (item["color"], item["roughness"], item["metallic"], item["transmission"])
     if key not in materials:
         material = bpy.data.materials.new(key[0])
