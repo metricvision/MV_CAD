@@ -348,18 +348,34 @@ function render(){
     const needed=Math.max(...spec.views.map(v=>{const b=bounds(geometry[v]);return Math.max(b.w/(cw-24),b.h/(ch-21));}));
     const scale=spec.scale||scales.find(n=>n>=needed)||Math.ceil(needed);
     const layouts={};
-    let dragging=null;
+    let dragging=null,pan=null;
+    function moveSheet(x,y){
+        // Leave a strip of paper within reach even at full-sheet zoom.
+        sheetView.x=Math.max(12-w*sheetView.z,Math.min(w-12,x));
+        sheetView.y=Math.max(12-h*sheetView.z,Math.min(h-12,y));
+        applyZoom();
+    }
+    viewport.onpointerdown=e=>{
+        if(e.button!==1||dragging||pan)return;
+        e.preventDefault();viewport.setPointerCapture(e.pointerId);
+        pan={id:e.pointerId,start:pagePoint(e,viewport),x:sheetView.x,y:sheetView.y};
+        viewport.style.cursor='grabbing';
+    };
+    const stopPan=e=>{
+        if(pan?.id!==e.pointerId)return false;
+        pan=null;viewport.style.cursor='';return true;
+    };
+    viewport.onlostpointercapture=stopPan;
+    viewport.onauxclick=e=>{if(e.button===1)e.preventDefault();};
     viewport.addEventListener('wheel',e=>{
         e.preventDefault();
-        if(dragging||!e.deltaY)return;
+        if(dragging||pan||!e.deltaY)return;
         const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?viewport.clientHeight:1);
         const z=Math.min(32,Math.max(1,sheetView.z*Math.exp(-delta*.002)));
         if(z===sheetView.z)return;
         const p=pagePoint(e,viewport),ratio=z/sheetView.z;
-        // Keep the cursor over the same paper point and stay inside the sheet.
-        sheetView.x=Math.max(w*(1-z),Math.min(0,p.x-(p.x-sheetView.x)*ratio));
-        sheetView.y=Math.max(h*(1-z),Math.min(0,p.y-(p.y-sheetView.y)*ratio));
-        sheetView.z=z;applyZoom();
+        sheetView.z=z;
+        moveSheet(z===1?0:p.x-(p.x-sheetView.x)*ratio,z===1?0:p.y-(p.y-sheetView.y)*ratio);
         if(placing)viewport.onpointermove(e);
     },{passive:false});
     function revealDimension(dim){
@@ -371,7 +387,7 @@ function render(){
         label.classList.add('dim-target');
         label.onclick=e=>{if(!placing)e.stopPropagation();};
         label.onpointerdown=e=>{
-            if(e.button!==0||placing||anchors.length)return;
+            if(e.button!==0||pan||placing||anchors.length)return;
             e.preventDefault();e.stopPropagation();
             const start=pagePoint(e,page);
             viewport.setPointerCapture(e.pointerId);
@@ -451,6 +467,12 @@ function render(){
     }
     const overlay=svg('g',page,{'pointer-events':'none',class:'dimension-preview'});
     viewport.onpointermove=e=>{
+        if(pan){
+            if(e.pointerId!==pan.id)return;
+            const p=pagePoint(e,viewport);
+            moveSheet(pan.x+p.x-pan.start.x,pan.y+p.y-pan.start.y);
+            return;
+        }
         const p=pagePoint(e,page);
         if(dragging){
             if(e.pointerId!==dragging.id)return;
@@ -466,12 +488,13 @@ function render(){
     };
     viewport.onpointerleave=()=>{if(!dragging)overlay.replaceChildren();};
     viewport.onpointerup=e=>{
+        if(stopPan(e))return;
         if(!dragging||dragging.id!==e.pointerId)return;
         const p=pagePoint(e,page),dx=p.x-dragging.start.x,dy=p.y-dragging.start.y;
         if(Math.hypot(dx,dy)>.1){checkpoint();dragging.save([dragging.at[0]+dx,dragging.at[1]+dy]);}
         const dim=dragging.dim;dragging=null;revealDimension(dim);
     };
-    viewport.onpointercancel=()=>{if(dragging){dragging=null;render();}};
+    viewport.onpointercancel=e=>{if(stopPan(e))return;if(dragging){dragging=null;render();}};
     viewport.onclick=e=>{
         if(!placing||!s)return;
         const {view,kind,refs}=placing,{cx,cy}=layouts[view],p=pagePoint(e,page);
