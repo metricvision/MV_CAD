@@ -1,11 +1,16 @@
 'use strict';
 const $=id=>document.getElementById(id),clone=x=>structuredClone(x),uid=()=>crypto.randomUUID();
+const pendingConstraints=new Map();
 const fresh=()=>({format:'MetricCAD-assembly',version:1,parts:[],instances:[],joints:[],constraints:[]});
 let doc=fresh(),assets={},solution={transforms:{},poses:{},roots:[],dof:0,jointFrames:{}},selected=null,selectedJoint=null,history=[],future=[],busy=false,fileAction='import',replacePart=null,pick=null,jointDraft=null,animation=null,motionBefore=null;
 let constraintDraft=null,selectedConstraint=null,transformMode=null,hoverFace=null,dragState=null,previewQueue=null,previewTask=null,previewError=null,previewToken=0;
 function status(s,error=false){$('status').textContent=s;$('status').className=error?'error':''}
 async function request(path,payload){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok){const x=await r.json();throw Error(x.error||'Berechnung fehlgeschlagen')}return r}
-async function commit(candidate,withMeshes=false,record=true){if(busy||animation||dragState)return false;busy=true;renderControls();status('Baugruppe wird berechnet …');try{const r=await(await request(withMeshes?'/assembly/build':'/assembly/solve',candidate)).json();if(record){history.push(JSON.stringify(doc));if(history.length>40)history.shift();future=[]}doc=r.document;solution=r;if(r.parts){assets=r.parts;prepareBuffers()}selected=doc.instances.some(i=>i.id===selected)?selected:null;selectedJoint=doc.joints.some(j=>j.id===selectedJoint)?selectedJoint:null;jointDraft=null;constraintDraft=null;pick=null;render();status('Aktuell · '+r.dof+' freie Bewegungsparameter');return true}catch(e){status(e.message,true);return false}finally{busy=false;render()}}
+async function commit(candidate,withMeshes=false,record=true){if(busy||animation||dragState)return false;busy=true;renderControls();status('Baugruppe wird berechnet …');try{const r=await(await request(withMeshes?'/assembly/build':'/assembly/solve',candidate)).json();if(record){history.push(JSON.stringify(doc));if(history.length>40)history.shift();future=[]}doc=r.document;solution=r;
+    for(const [id,c] of pendingConstraints){
+        if(doc.constraints?.some(item=>item.id===id)||!doc.instances.some(i=>i.id===c.parent)||!doc.instances.some(i=>i.id===c.child))pendingConstraints.delete(id);
+    }
+    if(r.parts){assets=r.parts;prepareBuffers()}selected=doc.instances.some(i=>i.id===selected)?selected:null;selectedJoint=doc.joints.some(j=>j.id===selectedJoint)?selectedJoint:null;jointDraft=null;constraintDraft=null;pick=null;render();status('Aktuell · '+r.dof+' freie Bewegungsparameter');return true}catch(e){status(e.message,true);return false}finally{busy=false;render()}}
 function download(data,name,type='application/json'){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function el(tag,text,parent){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(parent)parent.append(e);return e}
 function button(parent,text,fn,cls=''){const b=el('button',text,parent);b.onclick=fn;b.className=cls;b.disabled=busy||!!animation;return b}
@@ -32,9 +37,9 @@ function treeIcon(parent, name) {
     const icon = svg('svg', {viewBox:'0 0 24 24','aria-hidden':'true'}, '', parent);
     svg('path', {d:treeIcons[name]}, '', icon);
 }
-function treeRow(parent, label, icon, action, key, active=false) {
+function treeRow(parent, label, icon, action, key, active=false, pending=false) {
     const row = el('div', undefined, parent);
-    row.className = 'model-row' + (active ? ' selected' : '');
+    row.className = 'model-row' + (pending ? ' pending' : '') + (active ? ' selected' : '');
     const open = !foldedTreeRows.has(key);
     function toggle() {
         if (open) foldedTreeRows.add(key);
@@ -77,7 +82,7 @@ function renderTree() {
             }
             for (const [index, i] of instances.entries()) {
                 const matches = r => r.parent === i.id || r.child === i.id;
-                const constraints = (doc.constraints || []).filter(matches);
+                const constraints = [...(doc.constraints || []), ...pendingConstraints.values()].filter(matches);
                 const joints = doc.joints.filter(matches);
                 const key = constraints.length || joints.length ? 'part:' + i.id : null;
                 const open = treeRow(group, names.get(i.id), i.fixed ? 'fixed' : 'part',
@@ -93,7 +98,8 @@ function renderTree() {
                     for (const c of constraints) {
                         const label = c.name || conditionNames[c.type];
                         const icon = label === 'Bündig' ? 'flushTool' : label === 'Senkrecht' ? 'rightAngleTool' : c.type + 'Tool';
-                        treeRow(list, label + ' → ' + peer(c), icon, () => selectConstraint(c.id), null, selectedConstraint === c.id);
+                        const pending = pendingConstraints.has(c.id);
+                        treeRow(list, label + ' → ' + peer(c) + (pending ? ' · ausstehend' : ''), icon, () => selectConstraint(c.id), null, selectedConstraint === c.id, pending);
                     }
                 }
                 for (const j of joints) {
@@ -105,7 +111,7 @@ function renderTree() {
     }
     const parts=$('parts');parts.replaceChildren();for(const p of doc.parts){const row=el('div',undefined,parts);note(row,p.name||p.id);button(row,'＋ Instanz',()=>addInstance(p.id));button(row,'Im Part Design bearbeiten ↗',()=>openPartEditor(p.id));button(row,'Teil aktualisieren …',()=>{replacePart=p.id;fileAction='replace';$('file').click()})}}
 function addInstance(part){const d=clone(doc),n=d.instances.length;const id=uid();d.instances.push({id,part,name:(d.parts.find(p=>p.id===part)?.name||'Teil')+' · '+(n+1),pose:{position:[n?30:0,0,0],rotation:[0,0,0]},fixed:n===0});selected=id;commit(d).then(ok=>{if(ok)fit()})}
-function renderProperties(){const pane=$('properties');pane.replaceChildren();if(constraintDraft){constraintEditor(pane);return}if(jointDraft){jointEditor(pane);return}if(selectedJoint){const j=doc.joints.find(j=>j.id===selectedJoint);if(j){editJoint(j.id);return}}const i=doc.instances.find(i=>i.id===selected);if(!i){note(pane,'Teil im Modell oder Baum anklicken. Für eine Bewegung anschließend ein Gelenk anlegen.');note(pane,'Die erste Instanz wird fixiert. Jede weitere Instanz kann unabhängig platziert oder als Kind eines Gelenks verbunden werden.');return}el('h3',i.name||'Instanz',pane);button(pane,'Im Part Design bearbeiten ↗',()=>openPartEditor(i.part),'primary');note(pane,'Bearbeitet die gemeinsame Teildefinition für '+doc.instances.filter(x=>x.part===i.part).length+' Instanz(en).');const incoming=doc.joints.find(j=>j.child===i.id);const name=textInput(pane,'Name',i.name||'');
+function renderProperties(){const pane=$('properties');pane.oninput=null;pane.replaceChildren();if(constraintDraft){constraintEditor(pane);return}if(jointDraft){jointEditor(pane);return}if(selectedJoint){const j=doc.joints.find(j=>j.id===selectedJoint);if(j){editJoint(j.id);return}}const i=doc.instances.find(i=>i.id===selected);if(!i){note(pane,'Teil im Modell oder Baum anklicken. Für eine Bewegung anschließend ein Gelenk anlegen.');note(pane,'Die erste Instanz wird fixiert. Jede weitere Instanz kann unabhängig platziert oder als Kind eines Gelenks verbunden werden.');return}el('h3',i.name||'Instanz',pane);button(pane,'Im Part Design bearbeiten ↗',()=>openPartEditor(i.part),'primary');note(pane,'Bearbeitet die gemeinsame Teildefinition für '+doc.instances.filter(x=>x.part===i.part).length+' Instanz(en).');const incoming=doc.joints.find(j=>j.child===i.id);const name=textInput(pane,'Name',i.name||'');
     const colorLabel=el('label','Farbe dieser Instanz',pane);
     const color=el('input',undefined,colorLabel);
     color.type='color';
@@ -122,7 +128,11 @@ function renderControls(){const locked=busy||!!animation||!!motionBefore;for(con
     $('rotateTool').disabled=locked||!instance||instance.fixed||doc.joints.some(j=>j.child===selected);
     $('motionJoint').disabled=locked;$('motionSlider').disabled=busy||!!animation;for(const i of document.querySelectorAll('#properties input,#properties select'))if(locked)i.disabled=true;}
 
-function render(){renderTree();renderProperties();renderMotion();$('summary').textContent=doc.instances.length+' Instanzen · '+doc.joints.length+' Gelenke · '+(doc.constraints||[]).length+' Bedingungen · '+solution.dof+' Freiheitsgrade';$('empty').hidden=!!doc.instances.length;$('pickHint').textContent=pick?'Gewählte Instanz: Bezugfläche anklicken':' ';if(!pick)$('pickHint').textContent='';for(const mode of ['move','rotate']){const tool=$(mode+'Tool');tool.classList.toggle('active',transformMode===mode);tool.setAttribute('aria-pressed',String(transformMode===mode))}renderControls();draw()}
+function render(){
+    const count=pendingConstraints.size;
+    $('pendingBar').hidden=!count;
+    $('pendingCount').textContent=count===1?'1 Bedingung ausstehend':count+' Bedingungen ausstehend';
+    renderTree();renderProperties();renderMotion();$('summary').textContent=doc.instances.length+' Instanzen · '+doc.joints.length+' Gelenke · '+(doc.constraints||[]).length+' Bedingungen · '+solution.dof+' Freiheitsgrade';$('empty').hidden=!!doc.instances.length;$('pickHint').textContent=pick?'Gewählte Instanz: Bezugfläche anklicken':' ';if(!pick)$('pickHint').textContent='';for(const mode of ['move','rotate']){const tool=$(mode+'Tool');tool.classList.toggle('active',transformMode===mode);tool.setAttribute('aria-pressed',String(transformMode===mode))}renderControls();draw()}
 // Row-major rigid transforms. Shared convention with assembly_solver.py.
 const identity=()=>[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
 function mm(a,b){return a.map((row,i)=>row.map((_,j)=>row.reduce((s,v,k)=>s+v*b[k][j],0)))}
@@ -140,7 +150,7 @@ $('undo').onclick=()=>undo();$('redo').onclick=()=>undo(true);
 async function replaceAssembly(value) {
   if(value!==null && value?.format!=='MetricCAD-assembly')throw Error('Bitte eine Baugruppen-JSON wählen. Einzelteile über „Teil-JSON importieren“ einfügen.');
   if(!await commit(value??fresh(),true,false))return false;
-  history=[];future=[];selected=selectedJoint=selectedConstraint=null;
+  pendingConstraints.clear();history=[];future=[];selected=selectedJoint=selectedConstraint=null;
   invalidatePartEditors();fit();render();return true;
 }
 const assemblyFiles=bindProjectFiles({defaultName:'MetricCAD-Baugruppe.json',blocked:()=>busy||animation||motionBefore||dragState,replace:replaceAssembly});
@@ -216,14 +226,17 @@ $('assembly-tools').addEventListener('focusin',e=>{
 });
 function selectConstraint(id){
     if(busy||animation||motionBefore||dragState)return;
-    const c=doc.constraints?.find(item=>item.id===id);
+    const c=pendingConstraints.get(id)||doc.constraints?.find(item=>item.id===id);
     if(!c)return;
     selected=null;selectedJoint=null;jointDraft=null;transformMode=null;pick=null;hoverFace=null;
-    selectedConstraint=id;constraintDraft=clone(c);
+    selectedConstraint=id;constraintDraft=pendingConstraints.get(id)||clone(c);
     render();status('Bedingung ausgewählt · Entf zum Löschen.');
 }
 async function removeSelectedConstraint(){
     if(!selectedConstraint||busy||animation||motionBefore||dragState||pick)return;
+    if(pendingConstraints.delete(selectedConstraint)){
+        selectedConstraint=constraintDraft=null;render();return;
+    }
     const candidate=clone(doc);
     if(!candidate.constraints?.some(c=>c.id===selectedConstraint))return;
     keepPoses(candidate);
@@ -239,7 +252,7 @@ function newConstraint(type,name=conditionNames[type],angle=45){
     if(busy||animation||doc.instances.length<2)return;
     jointDraft=null;selectedJoint=null;selectedConstraint=null;transformMode=null;
     constraintDraft={id:uid(),type,name,parent:'',child:'',parentFace:'',childFace:'',opposed:false};
-    if(type==='offset')constraintDraft.offset=0;
+    if(type==='offset'&&name==='Bündig')constraintDraft.offset=0;
     if(type==='angle')constraintDraft.angle=angle;
     pick={constraint:true,side:'parent'};
     render();
@@ -263,7 +276,7 @@ for (const mode of ['move', 'rotate']) {
             : 'Teil auswählen und einen Achspfeil oder eine Ebenenfläche ziehen.');
     };
 }
-function constraintEditor(pane){const c=constraintDraft;el('h3',conditionNames[c.type],pane);const name=textInput(pane,'Name',c.name||'');name.oninput=()=>c.name=name.value;for(const side of ['parent','child']){const i=doc.instances.find(i=>i.id===c[side]);note(pane,(side==='parent'?'Fläche 1: ':'Fläche 2: ')+(i?(i.name||i.id)+' · '+(assets[i.part]?.datums[c[side+'Face']]?.label||c[side+'Face']):'noch nicht gewählt'));button(pane,side==='parent'?'Fläche 1 wählen':'Fläche 2 wählen',()=>{pick={constraint:true,side};render();status('Passende Fläche im Modell anklicken.');});}if(c.type==='offset'){const value=numberInput(pane,'Signierter Abstand entlang Normale von Fläche 1 (mm)',c.offset);value.oninput=()=>c.offset=Number(value.value);button(pane,'Abstandsrichtung umkehren',()=>{c.offset=-c.offset;render()});note(pane,'Beide Ebenen bleiben parallel. X/Y-Verschiebung in der Ebene und Drehung um ihre Normale bleiben frei.');}else if(c.type==='angle'){
+function constraintEditor(pane){const c=constraintDraft;el('h3',conditionNames[c.type],pane);const name=textInput(pane,'Name',c.name||'');name.oninput=()=>c.name=name.value;for(const side of ['parent','child']){const i=doc.instances.find(i=>i.id===c[side]);note(pane,(side==='parent'?'Fläche 1: ':'Fläche 2: ')+(i?(i.name||i.id)+' · '+(assets[i.part]?.datums[c[side+'Face']]?.label||c[side+'Face']):'noch nicht gewählt'));button(pane,side==='parent'?'Fläche 1 wählen':'Fläche 2 wählen',()=>{pick={constraint:true,side};render();status('Passende Fläche im Modell anklicken.');});}if(c.type==='offset'){const value=numberInput(pane,'Signierter Abstand entlang Normale von Fläche 1 (mm)',c.offset??'');value.oninput=()=>c.offset=Number(value.value);button(pane,'Abstandsrichtung umkehren',()=>{if(c.offset!=null)c.offset=-c.offset;render()});note(pane,'Beide Ebenen bleiben parallel. X/Y-Verschiebung in der Ebene und Drehung um ihre Normale bleiben frei.');}else if(c.type==='angle'){
     const field=numberInput(pane,'Winkel zwischen Normalen oder Achsen (°)',c.angle);
     field.min=0;field.max=180;field.step='any';
     field.oninput=()=>c.angle=field.valueAsNumber;
@@ -275,7 +288,30 @@ if(c.type==='concentric'||c.type==='offset'){
     const orientation=selectInput(pane,'Achsen / Normalen',[['same','Gleichgerichtet'],['opposed','Entgegengesetzt']],c.opposed?'opposed':'same');
     orientation.onchange=()=>c.opposed=orientation.value==='opposed';
 }
-button(pane,'Bedingung übernehmen',async()=>{const d=clone(doc);d.constraints??=[];const index=d.constraints.findIndex(x=>x.id===c.id);if(index<0)d.constraints.push(clone(c));else d.constraints[index]=clone(c);if(await commit(d)){selectedConstraint=null;render()}},'primary');if(selectedConstraint)button(pane,'Bedingung löschen',removeSelectedConstraint,'danger');button(pane,'Abbrechen',()=>{constraintDraft=null;selectedConstraint=null;pick=null;hoverFace=null;render()});}
+const active=doc.constraints?.some(item=>item.id===c.id);
+if(active)button(pane,'Änderungen übernehmen',async()=>{
+    const candidate=clone(doc);
+    candidate.constraints[candidate.constraints.findIndex(item=>item.id===c.id)]=clone(c);
+    if(await commit(candidate)){selectedConstraint=null;render()}
+},'primary');
+if(selectedConstraint)button(pane,'Bedingung löschen',removeSelectedConstraint,'danger');
+button(pane,pendingConstraints.has(c.id)?'Schließen':'Abbrechen',()=>{
+    constraintDraft=null;selectedConstraint=null;pick=null;hoverFace=null;render();
+});
+pane.oninput=()=>{if(pendingConstraints.has(c.id)){renderTree();draw()}};
+}
+$('applyPending').onclick=async()=>{
+    if(!pendingConstraints.size||busy||animation||motionBefore)return;
+    const candidate=clone(doc);
+    candidate.constraints??=[];
+    candidate.constraints.push(...pendingConstraints.values());
+    if(await commit(candidate)){selectedConstraint=null;render()}
+};
+$('discardPending').onclick=()=>{
+    pendingConstraints.clear();
+    constraintDraft=null;selectedConstraint=null;pick=null;hoverFace=null;
+    render();status('Ausstehende Bedingungen verworfen.');
+};
 function acceptConstraintPick(hit){
     const c=constraintDraft;
     if(!c||!hit)return;
@@ -296,11 +332,16 @@ function acceptConstraintPick(hit){
         }
         const frame=side=>mm(solution.transforms[c[side]],draftFrame(c[side],{face:c[side+'Face']}));
         const a=frame('parent'),b=frame('child'),normal=a.slice(0,3).map(row=>row[2]);
-        if(c.type==='tangent')c.opposed=dot(normal,b.slice(0,3).map((row,i)=>row[3]-a[i][3]))<0;
+        const distance=dot(normal,b.slice(0,3).map((row,i)=>row[3]-a[i][3]));
+        if(c.type==='offset' && c.offset==null)c.offset=distance;
+        if(c.type==='tangent')c.opposed=distance<0;
         else if(c.type!=='angle')c.opposed=dot(normal,b.slice(0,3).map(row=>row[2]))<0;
+        if(!doc.constraints?.some(item=>item.id===c.id)){
+            pendingConstraints.set(c.id,c);selectedConstraint=c.id;
+        }
         pick=null;
     }else pick={constraint:true,side:other};
-    hoverFace=null;render();status(pick?'Zweite Bezugsfläche wählen.':'Bezüge gewählt. Bedingung übernehmen.');
+    hoverFace=null;render();status(pick?'Zweite Bezugsfläche wählen.':pendingConstraints.has(c.id)?'Bedingung vorgemerkt.':'Bezüge gewählt.');
 }
 function drawFaceHighlight(){if(!gl)return;const refs=[];if(hoverFace&&pick)refs.push({...hoverFace,color:[1,.8,.35]});if(constraintDraft)for(const side of ['parent','child'])if(constraintDraft[side])refs.push({instance:constraintDraft[side],face:constraintDraft[side+'Face'],color:side==='parent'?[.25,.9,.8]:[.6,.65,1]});for(const ref of refs){const i=doc.instances.find(i=>i.id===ref.instance),a=i&&assets[i.part],b=i&&buffers[i.part];if(!a||!b)continue;gl.uniformMatrix4fv(modelLocation,false,columnMajor(solution.transforms[i.id]));gl.bindBuffer(gl.ARRAY_BUFFER,b.tri);gl.vertexAttribPointer(positionLocation,3,gl.FLOAT,false,24,0);gl.vertexAttribPointer(normalLocation,3,gl.FLOAT,false,24,12);gl.uniform3fv(colorLocation,ref.color);gl.uniform1f(lineLocation,0);for(let k=0;k<a.mesh.triangles.length;k++)if(a.mesh.faces[a.mesh.triangleFaces[k]]?.key===ref.face)gl.drawArrays(gl.TRIANGLES,k*3,3)}}
 function gizmoGeometry(){const i=doc.instances.find(i=>i.id===selected);if(!transformMode||!i||i.fixed||(transformMode==='rotate'&&doc.joints.some(j=>j.child===i.id))||pick||jointDraft||constraintDraft)return null;const t=solution.transforms[i.id];if(!t)return null;const origin=t.slice(0,3).map(r=>r[3]),p=project(origin),unit=82/camera.scale,axes=[[1,0,0],[0,1,0],[0,0,1]],ends=axes.map(a=>project(origin.map((v,k)=>v+a[k]*unit))),planes=[];for(const [a,b] of [[0,1],[0,2],[1,2]]){const va=sub(ends[a],p),vb=sub(ends[b],p);if(Math.abs(va[0]*vb[1]-va[1]*vb[0])<700)continue;const points=[[.2,.2],[.4,.2],[.4,.4],[.2,.4]].map(([u,v])=>[p[0]+va[0]*u+vb[0]*v,p[1]+va[1]*u+vb[1]*v]);planes.push({axes:[a,b],points})}return {origin,p,ends,planes,axes};}
@@ -328,13 +369,13 @@ function markerReference(c,side){
 function drawConstraintMarkers(){
     markerHits.length=0;
     const labels=[];
-    const constraints=(doc.constraints||[]).filter(c=>c.id!==constraintDraft?.id);
+    const constraints=[...(doc.constraints||[]),...pendingConstraints.values()].filter(c=>c.id!==constraintDraft?.id);
     if(constraintDraft)constraints.push(constraintDraft);
     for(const c of constraints){
         const a=markerReference(c,'parent'),b=markerReference(c,'child');
         if(!a||!b)continue;
         const selected=c.id===selectedConstraint||c===constraintDraft;
-        const group=svg('g',{class:'mate-marker'+(selected?' selected':'')});
+        const group=svg('g',{class:'mate-marker'+(pendingConstraints.has(c.id)?' pending':selected?' selected':'')});
         const segments=[];
         function line(start,end,style=''){
             svg('path',{d:'M'+start.slice(0,2).join(' ')+' L'+end.slice(0,2).join(' '),class:style},null,group);
