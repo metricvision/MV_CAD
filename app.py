@@ -66,6 +66,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/mcp/status":return self.json_reply(self.server.mcp_status())
             routes={"/":"frontend/index.html","/index.html":"frontend/index.html","/assembly":"frontend/assembly.html","/assembly.html":"frontend/assembly.html",
                     "/project_files.js":"frontend/js/project_files.js","/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
+                    "/drawing":"frontend/drawing.html","/drawing.js":"frontend/js/drawing.js","/drawing.css":"frontend/css/drawing.css",
                     "/part_studio.js":"frontend/js/part_studio.js","/part_studio.css":"frontend/css/part_studio.css"}
             if path in routes:
                 name=routes[path];kind={"html":"text/html; charset=utf-8","js":"application/javascript; charset=utf-8","css":"text/css; charset=utf-8"}[name.rsplit(".",1)[1]]
@@ -102,6 +103,9 @@ class Handler(BaseHTTPRequestHandler):
             # The legacy endpoints compute previews; persistent writes use /api.
             # All geometry, including assemblies, shares the same execution lock.
             with self.server.service.lock:
+                if path=="/drawing/views":
+                    from backend.drafting import project
+                    return self.json_reply(project(payload))
                 if path.startswith("/assembly/"):
                     from backend.assembly import assembly
                     if path=="/assembly/step":
