@@ -95,6 +95,13 @@ def project(payload):
         right, up = up, right.multiply(-1)
     axes = {'front': (normal,right,up), 'top': (up,right,normal.multiply(-1)),
             'right': (right,normal.multiply(-1),up)}
+    if payload.get('includeIso') or payload.get('isoOnly'):
+        diagonal = (normal + right + up).normalized()
+        horizontal = (right - normal).normalized()
+        iso = (diagonal, horizontal, diagonal.cross(horizontal).normalized())
+        if payload.get('isoOnly'):
+            axes = {}
+        axes['iso'] = iso
     for name, vectors in axes.items():
         normal, right, up = (v.toTuple() for v in vectors)
         def point(v):

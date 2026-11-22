@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const emptyProject = () => ({format:'MetricCAD-drawing',version:1,model:null,name:'',sheets:[]});
-const viewNames = {front:'Vorderansicht',top:'Draufsicht',right:'Rechtsansicht'};
+const viewNames = {front:'Vorderansicht',top:'Draufsicht',right:'Rechtsansicht',iso:'Isometrie'};
 const scales = [0.1,0.2,0.5,1,2,5,10,20,25,50,100,200,500,1000];
 const scaleText = n => n < 1 ? (1/n)+':1' : '1:'+n;
 const number = n => n.toLocaleString('de-DE',{maximumFractionDigits:3});
@@ -115,14 +115,16 @@ async function select(part,id=null){
     selectedDim=null;activeSheet=id;target=part;viewerReady=false;resetTool();projection={};pickedLabel='';
     const ticket=++generation;
     const s=sheet(),key=JSON.stringify([part,s?.projection||{}]);
+    const includeIso=s && (s.views.includes('iso')||s.dims.some(d=>d.view==='iso'));
     geometry=s?cache.get(key)||null:null;
+    if(includeIso&&!geometry?.iso)geometry=null;
     loading=!!doc.model;render();
     try{
         if(!doc.model)return;
         if(!catalog().some(e=>e.id===part))throw Error('Modellbezug fehlt. Blatt im Projekt erhalten.');
         if(s){
             if(!geometry){
-                const data=await requestGeometry('/drawing/views',{model:doc.model,part,projection:s.projection});
+                const data=await requestGeometry('/drawing/views',{model:doc.model,part,projection:s.projection,includeIso});
                 if(ticket!==generation)return;
                 geometry=data;cache.set(key,data);
             }
@@ -215,9 +217,19 @@ $('print').onclick=()=>window.print();
 for(const n of scales){const option=element('option',$('scale'),scaleText(n));option.value=n;}
 $('pdf').onclick=()=>{status('Im Druckdialog „Als PDF speichern“ wählen.');window.print();};
 $('pageSettings').onclick=()=>$('format').focus();
-for(const view of Object.keys(viewNames))$(view).onclick=()=>{
+for(const view of Object.keys(viewNames))$(view).onclick=async()=>{
     const s=sheet(),enabled=s.views.includes(view);
-    if(enabled && s.views.length===1)return;
+    if(loading || (enabled && s.views.length===1))return;
+    if(view==='iso'&&!geometry.iso){
+        const ticket=generation;
+        loading=true;$('iso').disabled=true;
+        try{
+            const data=await requestGeometry('/drawing/views',{model:doc.model,part:target,projection:s.projection,isoOnly:true});
+            if(ticket!==generation)return;
+            geometry.iso=data.iso;
+        }catch(e){if(ticket===generation)status(e.message,true);return;}
+        finally{if(ticket===generation){loading=false;$('iso').disabled=false;}}
+    }
     checkpoint();s.views=enabled?s.views.filter(v=>v!==view):[...s.views,view];resetTool();render();
 };
 for(const orientation of ['landscape','portrait'])$(orientation).onclick=()=>{
@@ -345,7 +357,7 @@ function render(){
     applyZoom();
     svg('rect',page,{x:5,y:5,width:w-10,height:h-10,fill:'white',stroke:'#283c47','stroke-width':.35});
     // First-angle layout: right view to the left, top view below the front view.
-    const cells={front:[1,0],top:[1,1],right:[0,0]};
+    const cells={front:[1,0],top:[1,1],right:[0,0],iso:[0,1]};
     const columns=[...new Set(spec.views.map(v=>cells[v][0]))].sort();
     const levels=[...new Set(spec.views.map(v=>cells[v][1]))].sort();
     const cols=columns.length,rows=levels.length;
