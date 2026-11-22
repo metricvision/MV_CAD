@@ -66,6 +66,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/mcp/status":return self.json_reply(self.server.mcp_status())
             routes={"/":"frontend/index.html","/index.html":"frontend/index.html","/assembly":"frontend/assembly.html","/assembly.html":"frontend/assembly.html",
                     "/project_files.js":"frontend/js/project_files.js","/assembly.js":"frontend/js/assembly.js","/assembly.css":"frontend/css/assembly.css","/project_sync.js":"frontend/js/project_sync.js","/project_sync.css":"frontend/css/project_sync.css",
+                    "/visualizer":"frontend/visualizer.html","/visualizer.js":"frontend/js/visualizer.js","/visualizer_view.js":"frontend/js/visualizer_view.js",
                     "/drawing":"frontend/drawing.html","/drawing.js":"frontend/js/drawing.js","/drawing.css":"frontend/css/drawing.css",
                     "/part_studio.js":"frontend/js/part_studio.js","/part_studio.css":"frontend/css/part_studio.css"}
             if path in routes:
@@ -87,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
             self.check_origin();path=urlsplit(self.path).path
             size=int(self.headers.get("Content-Length","0"))
             if not 0<size<=4_000_000:raise CommandError("invalid_size","Anfrage muss zwischen 1 Byte und 4 MB groß sein")
-            if path in ("/api","/mcp/start","/mcp/stop"):
+            if path in ("/api","/mcp/start","/mcp/stop","/visualizer/render","/visualizer/blender-path"):
                 if not secrets.compare_digest(self.headers.get("X-MetricCAD-Token",""),self.server.token):
                     raise CommandError("unauthorized","CAD-Verbindung nicht authentifiziert. Verbindung neu laden.")
             request_id = self.headers.get("X-CAD-Progress", "")
@@ -100,6 +101,12 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/api":
                 if not isinstance(payload,dict) or set(payload)-{"action","arguments"}:raise CommandError("invalid_request","Ungültige CAD-Anfrage")
                 return self.json_reply(self.server.service.execute(payload.get("action"),payload.get("arguments")))
+            if path=="/visualizer/blender-path":
+                from backend.visualizer import configure_blender
+                return self.json_reply(configure_blender(self.server.service.directory,payload))
+            if path=="/visualizer/render":
+                from backend.visualizer import render_png
+                return self.reply(render_png(payload,self.server.service.lock,self.server.service.directory),"image/png")
             # The legacy endpoints compute previews; persistent writes use /api.
             # All geometry, including assemblies, shares the same execution lock.
             with self.server.service.lock:
