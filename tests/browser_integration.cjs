@@ -86,6 +86,9 @@ const startup=new Promise((resolve,reject)=>{
   await tab.reload();await tab.locator('iframe:visible').waitFor();page=tab.frame({url:url+'/editor/part'});await page.waitForFunction(()=>window.metriccadSync?.project?.document.features[0].dimensions.find(d=>d.id==='width').value===120);
   const assembly=await browser.newPage();assembly.on('pageerror',e=>errors.push(e.message));
   await assembly.goto(url+'/assembly');
+  await assembly.getByRole('button',{name:'Baugruppe anlegen'}).click();
+  await assembly.getByLabel('Baugruppe benennen').fill('Beispiel');
+  await assembly.getByRole('button',{name:'Anlegen',exact:true}).click();
   const editor=assembly.frameLocator('iframe:visible');
   await editor.getByRole('button',{name:'Datei ▾'}).click();
   await editor.locator('#demo').click();

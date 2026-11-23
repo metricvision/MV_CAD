@@ -29,7 +29,9 @@ dialog .entry{display:block;width:100%;text-align:left}
 #tree button.node:hover,#tree button.group-title:hover,#tree .twist:hover{background:#22364a}
 #tree .node[aria-current=true]{background:#20444a;box-shadow:inset 0 0 0 1px #397472}
 #tree form{margin-top:14px}
-#status{position:fixed;bottom:24px;left:12px;background:#213449;padding:8px;border-radius:4px;z-index:4}#status:empty{display:none}
+#nameForm input{display:block;box-sizing:border-box;width:100%;margin:5px 0;padding:6px;color:inherit;background:#0e1b28;border:1px solid #41576a;border-radius:4px}
+#nameForm button:disabled{opacity:.45;cursor:default}
+#status{position:fixed;bottom:24px;left:12px;background:#213449;padding:8px;border-radius:4px;z-index:4}#tree #status{position:static;margin-top:8px}#status:empty{display:none}
 </style><body>
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true">
 <defs>
@@ -38,5 +40,6 @@ dialog .entry{display:block;width:100%;text-align:left}
 <symbol id="icon-drawing" viewBox="0 0 24 24"><path d="M5 2h9l5 5v15H5z M14 2v6h5"/></symbol>
 <symbol id="icon-visualizer" viewBox="0 0 24 24"><path d="M2 7h5l2-3h6l2 3h5v14H2z"/><circle cx="12" cy="13" r="4"/></symbol>
 </defs></svg>
-<dialog id="tree" aria-labelledby="tree-title"><h2 id="tree-title">Projektübersicht</h2><div id="entries"></div><form method="dialog"><button>Schließen</button></form></dialog>
+<dialog id="tree" aria-labelledby="tree-title"><h2 id="tree-title">Projektübersicht</h2><div id="entries"></div><form id="nameForm" hidden><label><span id="nameLabel"></span><input id="objectName" required autocomplete="off"></label><button id="confirmName" disabled>Anlegen</button><button type="button" id="cancelName">Abbrechen</button></form>
+<form id="treeActions" method="dialog"><button type="button" id="openProject">Projekt öffnen …</button><button id="closeTree">Schließen</button></form></dialog>
 <div id="status" role="status"></div><script src="/project_model.js"></script><script src="/project_files.js"></script><script src="/project.js"></script></body></html>

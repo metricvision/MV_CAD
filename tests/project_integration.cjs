@@ -11,10 +11,10 @@ const empty={
 };
 let pick,openFile,disk='',writes=0,savePicks=0;
 function element(){
-  return {style:{},children:[],append(e){this.children.push(e);},focus(){},remove(){},setAttribute(){},
-    click(){return this.onclick();},showModal(){
+  return {style:{},children:[],append(...e){this.children.push(...e);},replaceChildren(){this.children=[];},setCustomValidity(){},focus(){},remove(){},setAttribute(){},
+    click(){return this.onclick();},showModal(){this.open=true;
       const choice=this.children.find(e=>e.textContent===pick);if(choice)choice.click();
-    },close(){this.onclose();}};
+    },close(){this.open=false;this.onclose?.();}};
 }
 const body=element(),nodes=new Map();
 body.prepend=frame=>{
@@ -29,7 +29,7 @@ body.prepend=frame=>{
   }};
   queueMicrotask(()=>frame.onload());
 };
-const document={body,createElement:element,getElementById(id){
+const document={body,createElementNS:element,createElement:element,getElementById(id){
   if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);
 }};
 const ctx=vm.createContext({document,JSON,structuredClone,crypto:require('node:crypto'),URLSearchParams,
@@ -46,17 +46,28 @@ const file=id=>ctx.metricProject.file(id);
 const workspace=kind=>ctx.metricProject.workspace(kind);
 (async()=>{
   await new Promise(r=>setImmediate(r));
+  assert.equal(evaluate('active'),null);
+  assert.equal(nodes.get('tree').open,true);
+  const nameObject=async name=>{
+    const input=nodes.get('objectName');input.value=name;input.oninput();
+    await nodes.get('nameForm').onsubmit({preventDefault(){}});
+  };
+  nodes.get('entries').children[0].children[0].children[1].click();
+  await nameObject('   ');assert.equal(nodes.get('confirmName').disabled,true);
+  nodes.get('cancelName').click();assert.equal(evaluate('doc.items.length'),0);
+  nodes.get('entries').children[0].children[0].children[1].click();
+  await nameObject('Teil');
   const initial=evaluate('entry().id');
   Object.assign(evaluate('current().editor.snapshot()'),structuredClone(plate));pick='Teil';
-  await workspace('assembly');await ctx.metricProject.insert();
+  await workspace('assembly');await nameObject('Baugruppe');await ctx.metricProject.insert();
   const assembly=evaluate('entry().id'),assemblyFrame=evaluate('current().frame');
   await ctx.metricProject.editPart('board');assert.equal(evaluate('active'),initial);
   evaluate('current().editor.snapshot().features[0].depth=17');
   await workspace('assembly');assert.equal(evaluate('current().frame'),assemblyFrame);
   assert.equal(evaluate('current().editor.snapshot().parts[0].document.features[0].depth'),17);
-  pick='Baugruppe';await workspace('drawing');await ctx.metricProject.link('assembly');
+  pick='Baugruppe';await workspace('drawing');await nameObject('Zeichnung');await ctx.metricProject.link('assembly');
   evaluate('current().editor.snapshot().sheets.push({id:"Blatt",dims:[]})');
-  await workspace('visualizer');await ctx.metricProject.link('assembly');
+  await workspace('visualizer');await nameObject('Szene');await ctx.metricProject.link('assembly');
   evaluate('current().editor.snapshot().materials.board={color:"#ffffff"}');
   await file('save');const first=JSON.parse(disk);
   assert.equal(first.items.length,4);
@@ -67,7 +78,7 @@ const workspace=kind=>ctx.metricProject.workspace(kind);
   await workspace('part');evaluate('current().editor.snapshot().features[0].depth=21');
   await workspace('drawing');assert.equal(evaluate('current().editor.snapshot().model.parts[0].document.features[0].depth'),21);
   await file('save');assert.equal(savePicks,1);
-  await file('open');await workspace('visualizer');
+  await file('open');assert.equal(evaluate('entry().kind'),'drawing');await workspace('visualizer');
   assert.equal(evaluate('current().editor.snapshot().model.parts[0].document.features[0].depth'),21);
   assert.equal(evaluate('current().editor.snapshot().materials.board.color'),'#ffffff');
   await workspace('drawing');assert.equal(evaluate('current().editor.snapshot().sheets[0].id'),'Blatt');

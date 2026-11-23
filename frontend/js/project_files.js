@@ -1,5 +1,5 @@
 // One file handle and one saved snapshot per project.
-function bindProjectFiles({defaultName, prepare, editorDirty, replace}) {
+function bindProjectFiles({defaultName, prepare, documentToSave, editorDirty, replace}) {
   let handle=null, stamp=null, saved=JSON.stringify(doc), active=false;
   const types=[{description:'MetricCAD JSON',accept:{'application/json':['.json']}}];
   const modified=()=>JSON.stringify(doc)!==saved;
@@ -32,7 +32,7 @@ function bindProjectFiles({defaultName, prepare, editorDirty, replace}) {
       throw Error('Die Datei wurde außerhalb dieses Tabs geändert. Bitte „Speichern unter …“ verwenden.');
     }
     await prepare();
-    const snapshot=JSON.stringify(doc), contents=JSON.stringify(doc,null,2);
+    const snapshot=JSON.stringify(doc), contents=JSON.stringify(documentToSave(),null,2);
     const writer=await target.createWritable();
     try{await writer.write(contents);await writer.close();}
     catch(error){await writer.abort().catch(()=>{});throw error;}

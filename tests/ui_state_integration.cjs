@@ -28,6 +28,8 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
     if(dom)dom.window.close();
     function install(w){
       w.structuredClone=structuredClone;w.fetch=(p,o)=>fetch(new URL(p,url),o);w.AbortSignal=AbortSignal;
+      w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+      w.HTMLDialogElement.prototype.close=function(){this.open=false;};
       w.confirm=()=>true;w.prompt=()=> 'Neues Testprojekt';
       w.ResizeObserver=class{constructor(callback){this.callback=callback;}observe(){setTimeout(()=>this.callback([]),0);}disconnect(){}};
       w.HTMLElement.prototype.getBoundingClientRect=function(){return {x:0,y:0,left:0,top:0,right:1000,bottom:700,width:1000,height:700};};
@@ -41,6 +43,11 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
       }
     }
     dom=await JSDOM.fromURL(url+route,{resources:new EditorResources(),runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console_,beforeParse:install});
+    if(!route.includes('?')){
+      await waitFor(()=>dom.window.document.getElementById('tree')?.open,'empty project tree');
+      await dom.window.eval("create("+JSON.stringify(route==='/'?'part':'assembly')+",'Testobjekt');");
+      dom.window.document.getElementById('tree').close();
+    }
     await waitFor(()=>dom.window.eval('typeof current==="function" && current()'),'workspace loaded');
 
   }
@@ -139,8 +146,8 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
     let source=fileHandle('Modell.json',JSON.stringify(input)),destination=fileHandle('Kopie.json');
     const shell=dom.window;
     shell.showOpenFilePicker=async()=>[source];shell.showSaveFilePicker=async()=>{picks++;return destination;};
-    shell.HTMLDialogElement.prototype.showModal=function(){this.returnValue=choice;this.onclose();};
-    const click=async id=>{await shell.metricProject.file(id);w=shell.eval('current().frame.contentWindow');};
+    shell.HTMLDialogElement.prototype.showModal=function(){this.open=true;if(this.onclose){this.returnValue=choice;this.onclose();}};
+    const click=async id=>{await shell.metricProject.file(id);w=shell.eval('current()?.frame.contentWindow');};
     if(route==='/'){
       await w.eval("plane='XZ';newSketch()");
       const ok=await w.eval("commitGeometry({id:'first-rectangle',type:'rect',x:0,y:0,a:20,b:10,angle:0},null,{horizontal:true})");
@@ -158,11 +165,11 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
     await click('saveAs');assert.equal(picks,3);w.eval("doc.testNote='Kopie'");
     await click('new');assert.equal(w.eval('doc.testNote'),'Kopie'); // cancel
     choice='save';failWrite=true;await click('new');assert.equal(w.eval('doc.testNote'),'Kopie');
-    failWrite=false;await click('new');assert.equal(w.eval('doc')[key].length,0);
+    failWrite=false;await click('new');assert.equal(shell.eval('doc.items.length'),0);
     assert.equal(JSON.parse(await (await destination.getFile()).text()).items[0].data.testNote,'Kopie');
     assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,undefined);
-    source=fileHandle('Defekt.json','null');await click('open');assert.equal(w.eval('doc')[key].length,0);
-    w.eval("doc.testNote='Verwerfen'");choice='discard';await click('new');assert.equal(w.eval('doc.testNote'),undefined);
+    source=fileHandle('Defekt.json','null');await click('open');assert.equal(shell.eval('doc.items.length'),0);
+    await shell.eval("create('part','Verwerfen')");choice='discard';await click('new');assert.equal(shell.eval('doc.items.length'),0);
   }
   assert.deepEqual(errors,[]);
   dom.window.close();dom=null;
