@@ -8,7 +8,7 @@ const number = n => n.toLocaleString('de-DE',{maximumFractionDigits:3});
 let doc = emptyProject(), target = null, geometry = null, generation = 0, loading = false;
 let sheetView={};
 let anchors = [], placing = null, tool = '';
-const tools = ['autoDim','horizontal','vertical','length','diameter'];
+const tools = ['autoDim','horizontal','vertical','length','radius','diameter'];
 const undoStack=[], redoStack=[];
 function checkpoint(){
     undoStack.push(JSON.stringify(doc.sheets));
@@ -150,34 +150,23 @@ function checkModel(model){
     if(Array.isArray(model?.features) && model.features.length)return;
     throw Error('Bitte eine MetricCAD-Teil- oder Baugruppendatei wählen.');
 }
-async function importModel(update,expectAssembly){
-    if(!window.showOpenFilePicker)throw Error('Zum Öffnen lokaler Dateien bitte Chrome oder Edge verwenden.');
-    const [handle]=await window.showOpenFilePicker({types:[{description:'MetricCAD JSON',accept:{'application/json':['.json']}}]});
-    const file=await handle.getFile(),model=JSON.parse(await file.text());checkModel(model);
-    if(!update && isAssembly(model)!==expectAssembly)throw Error(expectAssembly?'Bitte eine Baugruppen-JSON wählen.':'Bitte eine Teil-JSON wählen.');
-    if(update&&isAssembly(model)!==isAssembly(doc.model))throw Error('Modelltyp stimmt nicht mit dem Zeichnungsprojekt überein.');
-    const name=model.name||file.name.replace(/\.json$/i,'');
-    // Compute before replacing the snapshot, so a broken update leaves the project usable.
-    const data=await getMeshes(model);
-    if(!update){doc=emptyProject();collapsed.clear();}
-    undoStack.length=redoStack.length=0;
-    doc.model=model;doc.name=name;cache.clear();meshes=data;
-    for(const s of doc.sheets){const item=catalog().find(i=>i.id===s.part);if(item)s.name=item.name;}
-    await select(update?target:null,update?activeSheet:null);return true;
+function validTolerance(t){
+    return t?.kind==='symmetric' ? Number.isFinite(t.value)&&t.value>=0 :
+        t?.kind==='limits' && Number.isFinite(t.upper)&&Number.isFinite(t.lower)&&t.upper>=t.lower;
 }
 function validSheet(s){
     return s && (s.part===null||typeof s.part==='string') && typeof s.name==='string' &&
         ['A4','A3'].includes(s.format) && (s.scale===0||scales.includes(s.scale)) &&
         Array.isArray(s.views)&&s.views.length>0&&new Set(s.views).size===s.views.length&&s.views.every(v=>Object.hasOwn(viewNames,v)) &&
         Array.isArray(s.dims)&&s.dims.every(d=>Object.hasOwn(viewNames,d.view)&&
-            ['horizontal','vertical','length','diameter','gap'].includes(d.kind)&&Array.isArray(d.refs)&&
+            ['horizontal','vertical','length','radius','diameter','gap'].includes(d.kind)&&Array.isArray(d.refs)&&
             d.refs.length===(['horizontal','vertical','gap'].includes(d.kind)?2:1)&&d.refs.every(r=>typeof r?.key==='string'&&[0,1].includes(r.end))&&
-            Array.isArray(d.at)&&d.at.length===2&&d.at.every(Number.isFinite));
+            (d.tolerance===undefined||validTolerance(d.tolerance))&&Array.isArray(d.at)&&d.at.length===2&&d.at.every(Number.isFinite));
 }
-const files=bindProjectFiles({defaultName:'Werkstattzeichnung.json',blocked:()=>loading,replace:async value=>{
+async function loadDrawing(value){
     if(value){
         if(value.format!=='MetricCAD-drawing'||value.version!==1||!Array.isArray(value.sheets)||!value.sheets.every(validSheet))throw Error('Ungültiges Zeichnungsprojekt. Für Teile und Baugruppen „Modell öffnen“ wählen.');
-        checkModel(value.model);
+        if(value.model)checkModel(value.model);
         const ids=new Set();
         for(const s of value.sheets){
             if(typeof s.id!=='string'||!s.id||ids.has(s.id))s.id=crypto.randomUUID();
@@ -185,14 +174,18 @@ const files=bindProjectFiles({defaultName:'Werkstattzeichnung.json',blocked:()=>
         }
     }
     undoStack.length=redoStack.length=0;doc=value||emptyProject();meshes=null;cache.clear();collapsed.clear();await select(doc.sheets[0]?.part??null,doc.sheets[0]?.id??null);return true;
-}});
-$('source').onclick=()=>files.switchTo(()=>importModel(false,false),true);
-$('assemblySource').onclick=()=>files.switchTo(()=>importModel(false,true),true);
-$('update').onclick=async()=>{
-    if(!doc.model||loading)return;
-    document.body.inert=true;
-    try{await importModel(true);}catch(e){if(e.name!=='AbortError')status(e.message,true);}finally{document.body.inert=false;}
 };
+async function refreshDrawing(value){
+    doc=value;meshes=null;cache.clear();
+    await select(target,activeSheet);return true;
+}
+registerEditor({blocked:()=>loading,load:loadDrawing,refresh:refreshDrawing,
+    sheet:s=>select(s.part,s.id),
+    async link(model,name){checkModel(model);const data=await getMeshes(model);doc.model=model;doc.name=name;meshes=data;await select(null);}
+});
+$('source').onclick=()=>host.link('part');
+$('assemblySource').onclick=()=>host.link('assembly');
+$('update').onclick=()=>{if(doc.model&&!loading)refreshDrawing(doc);};
 function defaults(){
     return {part:target,name:catalog().find(x=>x.id===target)?.name||'',format:'A4',scale:0,
         views:['front','top','right'],dims:[]};
@@ -203,6 +196,35 @@ $('create').onclick=()=>{
     const s={...defaults(),id:crypto.randomUUID(),title:''};
     s.projection={...(sheet()?.projection||projection)};doc.sheets.push(s);collapsed.delete(null);collapsed.delete(target);
     return select(target,s.id);
+};
+const decimal=n=>String(n).replace('.',',');
+function updateToleranceFields(){
+    const mode=$('tolMode').value;
+    $('tolUpperRow').hidden=mode==='none';
+    $('tolLowerRow').hidden=mode!=='limits';
+    $('tolUpperLabel').textContent=mode==='symmetric'?'Abweichung ± (mm)':'Oberes Abmaß (mm)';
+}
+$('tolMode').onchange=updateToleranceFields;
+$('toleranceEditor').onsubmit=e=>{
+    e.preventDefault();
+    if(!sheet()?.dims.includes(selectedDim))return;
+    const mode=$('tolMode').value;
+    function read(id){
+        const raw=$(id).value.trim().replace(',','.');
+        return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw)?Number(raw):NaN;
+    }
+    let tolerance;
+    if(mode==='symmetric')tolerance={kind:mode,value:read('tolUpper')};
+    if(mode==='limits')tolerance={kind:mode,upper:read('tolUpper'),lower:read('tolLower')};
+    if(tolerance&&!validTolerance(tolerance)){
+        status(mode==='symmetric'?'Eine nichtnegative Abweichung eingeben.':'Beide Abmaße eingeben. Das obere muss mindestens so groß wie das untere sein.',true);
+        return;
+    }
+    if(JSON.stringify(tolerance)===JSON.stringify(selectedDim.tolerance))return;
+    checkpoint();
+    if(tolerance)selectedDim.tolerance=tolerance;
+    else delete selectedDim.tolerance;
+    render();status('Toleranz übernommen.');
 };
 $('deleteDim').onclick=()=>{
     const dimensions=sheet()?.dims,index=dimensions?.indexOf(selectedDim)??-1;
@@ -248,7 +270,7 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape'){resetTool();render();
 function bounds(lines){
     let x=Infinity,y=Infinity,r=-Infinity,b=-Infinity;
     for(const line of lines){
-        if(line.hidden)continue;
+        if(line.hidden||line.axis)continue;
         const [left,top,right,bottom]=line.box;
         x=Math.min(x,left);y=Math.min(y,top);r=Math.max(r,right);b=Math.max(b,bottom);
     }
@@ -263,7 +285,26 @@ function drawLine(parent,a,b,color='#25303b',width=.22){
 function textAt(parent,x,y,text,size=3,attrs={}){
     return svg('text',parent,{x,y,'font-size':size,'font-family':'sans-serif',fill:'#182a38',...attrs},text);
 }
-function measure(parent,a,b,at,kind,value){
+function dimensionLabel(parent,x,y,nominal,tolerance,attrs={}){
+    if(tolerance?.kind!=='limits'){
+        const deviation=tolerance?' ±'+decimal(tolerance.value):'';
+        return textAt(parent,x,y,nominal+deviation+' mm',2.8,attrs);
+    }
+    const signed=n=>(n>0?'+':'')+decimal(n);
+    const upper=signed(tolerance.upper),lower=signed(tolerance.lower);
+    const label=svg('g',parent,{'aria-label':nominal+' ('+upper+' / '+lower+') mm'});
+    if(attrs.transform)label.setAttribute('transform',attrs.transform);
+    const run=svg('g',label,{});
+    const start=textAt(run,0,0,nominal,2.8);
+    const pos=start.getComputedTextLength()+0.6;
+    const hi=textAt(run,pos,-1.2,upper,2),lo=textAt(run,pos,0.9,lower,2);
+    const unitX=pos+Math.max(hi.getComputedTextLength(),lo.getComputedTextLength())+0.6;
+    const unit=textAt(run,unitX,0,'mm',2.8);
+    const width=unitX+unit.getComputedTextLength();
+    run.setAttribute('transform','translate('+(attrs['text-anchor']==='middle'?x-width/2:x)+' '+y+')');
+    return label;
+}
+function measure(parent,a,b,at,kind,value,tolerance,prefix=''){
     const distance=Math.hypot(b[0]-a[0],b[1]-a[1]);
     let u=kind==='vertical'?[0,1]:kind==='horizontal'?[1,0]:distance?[ (b[0]-a[0])/distance,(b[1]-a[1])/distance ]:[1,0];
     const n=[-u[1],u[0]],foot=p=>{
@@ -289,7 +330,7 @@ function measure(parent,a,b,at,kind,value){
     }
     const angle=Math.atan2(u[1],u[0])*180/Math.PI;
     const rotation=angle>89?angle-180:angle< -90?angle+180:angle;
-    return textAt(parent,at[0],at[1]-1,number(value)+' mm',2.8,{'text-anchor':'middle',transform:'rotate('+rotation+' '+at[0]+' '+at[1]+')'});
+    return dimensionLabel(parent,at[0],at[1]-1,prefix+number(value),tolerance,{'text-anchor':'middle',transform:'rotate('+rotation+' '+at[0]+' '+at[1]+')'});
 }
 // Project a center or parallel edge onto the other edge's extended line.
 function gapPoints(a,b){
@@ -307,7 +348,23 @@ function gapPoints(a,b){
 }
 function drawAnnotation(group,d,edges,to,scale,at){
     const edge=edges[0];
+    if(d.kind==='radius'){
+        if(!edge.radiusPoint)return null;
+        const tip=to(edge.radiusPoint),center=to(edge.arcCenter);
+        const u=tip.map((v,i)=>(v-center[i])/(edge.radius/scale));
+        const sign=(at[0]-tip[0])*u[0]+(at[1]-tip[1])*u[1]<0?-1:1;
+        const along=t=>tip.map((v,i)=>v+t*sign*u[i]);
+        const elbow=along(3),base=along(1.6),n=[-u[1],u[0]];
+        drawLine(group,tip,elbow);drawLine(group,elbow,at);
+        svg('polygon',group,{points:[tip,base.map((v,i)=>v+.45*n[i]),base.map((v,i)=>v-.45*n[i])].map(p=>p.join(',')).join(' '),fill:'#25303b'});
+        return dimensionLabel(group,at[0],at[1]-1,'R '+number(edge.radius),d.tolerance);
+    }
     if(d.kind==='diameter'){
+        if(edge.diameterEnds){
+            const [a,b]=edge.diameterEnds.map(to);
+            return measure(group,a,b,at,'length',edge.diameter,d.tolerance,'Ø ');
+        }
+        if(!edge.center)return null;
         const c=to(edge.center),dx=at[0]-c[0],dy=at[1]-c[1],len=Math.hypot(dx,dy)||1;
         drawLine(group,[c[0]+dx/len*edge.diameter/(2*scale),c[1]+dy/len*edge.diameter/(2*scale)],at);
         return textAt(group,...at,'Ø '+number(edge.diameter),2.8);
@@ -317,13 +374,21 @@ function drawAnnotation(group,d,edges,to,scale,at){
     if(!pts)return null;
     const dx=pts[1][0]-pts[0][0],dy=pts[1][1]-pts[0][1];
     return measure(group,to(pts[0]),to(pts[1]),at,d.kind,d.kind==='horizontal'?Math.abs(dx):
-        d.kind==='vertical'?Math.abs(dy):Math.hypot(dx,dy));
+        d.kind==='vertical'?Math.abs(dy):Math.hypot(dx,dy),d.tolerance);
 }
 function render(){
     tree();
     const s=sheet(),area=$('preview');area.replaceChildren();
     const ready=Boolean(s&&geometry);
     $('deleteDim').hidden=!s?.dims.includes(selectedDim);
+    $('toleranceEditor').hidden=$('deleteDim').hidden;
+    if(!$('toleranceEditor').hidden){
+        const t=selectedDim.tolerance;
+        $('tolMode').value=t?.kind||'none';
+        $('tolUpper').value=decimal(t?.value??t?.upper??0);
+        $('tolLower').value=decimal(t?.lower??-(t?.value||0));
+        updateToleranceFields();
+    }
     const modelMode=Boolean(doc.model&&!s&&catalog().some(e=>e.id===target));
     $('modelView').hidden=!modelMode||!viewerReady;
     $('projectionPanel').hidden=$('modelView').hidden;
@@ -341,7 +406,7 @@ function render(){
     $('format').value=spec.format;$('scale').value=spec.scale;
     for(const id of ['hiddenEdges','centers','dimensions'])$(id).checked=spec[id]??(id==='dimensions');
     for(const o of ['landscape','portrait'])$(o).setAttribute('aria-pressed',String((spec.orientation||'landscape')===o));
-    $('hint').textContent=placing?(anchors.length===1&&(!tool||tool==='autoDim')?'Maß ins Freie setzen oder zweite Kante wählen.':'Maßposition auf dem Blatt anklicken.'):tool==='length'?'Gerade Kante wählen.':tool==='diameter'?'Kreis wählen.':tool&&tool!=='autoDim'?'Zwei Kantenenden oder Kreismittelpunkte in derselben Ansicht wählen.':'Kante oder Kreis wählen, optional zweite Kante, dann Maß ins Freie setzen. Maßzahl ziehen zum Verschieben.';
+    $('hint').textContent=placing?(placing.kind!=='radius'&&anchors.length===1&&(!tool||tool==='autoDim')?'Maß ins Freie setzen oder zweite Kante wählen.':'Maßposition auf dem Blatt anklicken.'):tool==='radius'?'Verrundung oder Kreisbogen wählen.':tool==='length'?'Gerade Kante wählen.':tool==='diameter'?'Kreis oder Zylinderkontur wählen.':tool&&tool!=='autoDim'?'Zwei Kantenenden oder Kreismittelpunkte in derselben Ansicht wählen.':'Kante oder Kreis wählen, optional zweite Kante, dann Maß ins Freie setzen. Maßzahl ziehen zum Verschieben.';
     const size=spec.format==='A3'?[420,297]:[297,210];
     const [w,h]=spec.orientation==='portrait'?size.reverse():size;
     document.documentElement.style.setProperty('--paper-ratio',w/h);
@@ -418,6 +483,17 @@ function render(){
         layouts[v]={to,cx,cy,lookup};
         textAt(page,cx,cy-ch/2+4,viewNames[v],2.8,{'text-anchor':'middle'});
         for(const edge of [...lines.filter(e=>e.hidden),...lines.filter(e=>!e.hidden)]){
+            if(edge.axis){
+                if(spec.centers){
+                    const [a,b]=edge.points.map(to),length=Math.hypot(b[0]-a[0],b[1]-a[1]);
+                    if(length){
+                        const pad=a.map((v,i)=>2*(b[i]-v)/length);
+                        drawLine(page,a.map((v,i)=>v-pad[i]),b.map((v,i)=>v+pad[i]),'#637581',.15)
+                            .setAttribute('stroke-dasharray','3 .7 .5 .7');
+                    }
+                }
+                continue;
+            }
             if(edge.hidden&&!spec.hiddenEdges)continue;
             const points=edge.points.map(to).map(p=>p.join(',')).join(' ');
             if(edge.hidden){
@@ -432,7 +508,10 @@ function render(){
             svg('polyline',page,{points,fill:'none',stroke:picked?'#18877a':'#18232d','stroke-width':picked ? .65 : .35});
             const automatic=!tool||tool==='autoDim';
             if(spec.dimensions===false||!edge.ref||(placing&&!(automatic&&anchors.length===1)))continue;
-            if(tool==='diameter'&&!edge.center||tool==='length'&&!edge.ends)continue;
+            if(edge.radiusPoint && ((!automatic && tool!=='radius') || anchors.length))continue;
+            if(tool==='radius'&&!edge.radiusPoint)continue;
+            if(placing?.kind==='radius')continue;
+            if(tool==='diameter'&&!edge.diameter||tool==='length'&&!edge.ends)continue;
             const path=svg('polyline',page,{points,class:'edge-hit'});
             path.onclick=event=>{
                 event.stopPropagation();const p=pagePoint(event,page);
@@ -445,15 +524,15 @@ function render(){
                     if(first===edge||!gapPoints(first,edge)){status('Für einen Kantenabstand zwei parallele Kanten wählen.',true);return;}
                 }
                 anchors.push({view:v,key:edge.ref,end});
-                const kind=automatic?(anchors.length===2?'gap':edge.center?'diameter':'length'):tool;
-                if(automatic||kind==='length'||kind==='diameter'||anchors.length===2){
+                const kind=automatic?(anchors.length===2?'gap':edge.radiusPoint?'radius':edge.center?'diameter':'length'):tool;
+                if(automatic||kind==='length'||kind==='radius'||kind==='diameter'||anchors.length===2){
                     placing={view:v,kind,refs:anchors.map(({key,end})=>({key,end}))};
                 }
                 render();
             };
         }
         if(anchors.length&&anchors[0].view===v){
-            const a=anchors[0],edge=lookup.get(a.key),pt=to(edge.center||edge.ends[a.end]);
+            const a=anchors[0],edge=lookup.get(a.key),pt=to(edge.radiusPoint||edge.center||edge.ends[a.end]);
             svg('circle',page,{cx:pt[0],cy:pt[1],r:1.2,fill:'#197b70','pointer-events':'none'});
         }
 
@@ -474,7 +553,7 @@ function render(){
         const paint=(g,pos)=>drawAnnotation(g,d,edges,to,scale,pos);
         const label=paint(group,at);
         if(!label){markMissing();continue;}
-        if(row){row.title+=' · '+label.textContent;row.lastElementChild.textContent=row.title;}
+        if(row){row.title+=' · '+(label.getAttribute('aria-label')||label.textContent);row.lastElementChild.textContent=row.title;}
         if(selectedDim===d)group.classList.add('selected-dimension');
         if(!tool&&!placing&&!anchors.length){
             group.setAttribute('pointer-events','visiblePainted');

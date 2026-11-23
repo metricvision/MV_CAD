@@ -5,7 +5,7 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
-const {JSDOM,VirtualConsole}=require(process.env.JSDOM_MODULE||'jsdom');
+const {JSDOM,VirtualConsole,ResourceLoader}=require(process.env.JSDOM_MODULE||'jsdom');
 const {createCanvas}=require(process.env.CANVAS_MODULE||'@napi-rs/canvas');
 const root=path.resolve(__dirname,'..');
 const directory=fs.mkdtempSync(path.join(os.tmpdir(),'metriccad-ui-state-'));
@@ -26,18 +26,25 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   const console_=new VirtualConsole();console_.on('jsdomError',e=>errors.push(e.stack||e.message));
   async function load(route='/?project='+project.id){
     if(dom)dom.window.close();
-    dom=await JSDOM.fromURL(url+route,{resources:'usable',runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console_,beforeParse(w){
+    function install(w){
       w.structuredClone=structuredClone;w.fetch=(p,o)=>fetch(new URL(p,url),o);w.AbortSignal=AbortSignal;
       w.confirm=()=>true;w.prompt=()=> 'Neues Testprojekt';
       w.ResizeObserver=class{constructor(callback){this.callback=callback;}observe(){setTimeout(()=>this.callback([]),0);}disconnect(){}};
       w.HTMLElement.prototype.getBoundingClientRect=function(){return {x:0,y:0,left:0,top:0,right:1000,bottom:700,width:1000,height:700};};
       w.HTMLElement.prototype.setPointerCapture=function(){};w.HTMLElement.prototype.releasePointerCapture=function(){};
       const canvases=new WeakMap();w.HTMLCanvasElement.prototype.getContext=function(type){if(type!=='2d')return null;if(!canvases.has(this))canvases.set(this,createCanvas(1200,900));return canvases.get(this).getContext('2d');};
-    }});
-    if(route==='/assembly')await waitFor(()=>dom.window.document.getElementById('saveAs')?.onclick,'assembly loaded');
-    else await waitFor(()=>dom.window.metriccadSync?.project && !dom.window.eval('busy'),'initial project');
+    }
+    class EditorResources extends ResourceLoader{
+      fetch(resource,options){
+        if(resource.endsWith('/editor.js'))install(options.element.ownerDocument.defaultView);
+        return super.fetch(resource,options);
+      }
+    }
+    dom=await JSDOM.fromURL(url+route,{resources:new EditorResources(),runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:console_,beforeParse:install});
+    await waitFor(()=>dom.window.eval('typeof current==="function" && current()'),'workspace loaded');
+
   }
-  await load();let w=dom.window;
+  await load();let w=dom.window.eval('current().frame.contentWindow');
   assert.equal(w.document.getElementById('save').disabled,false);
   assert.match(w.document.getElementById('tree').textContent,/Grundplatte/);
   await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','initial MCP status');
@@ -49,7 +56,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   w.document.getElementById('mcpCopy').click();
   await waitFor(()=>w.document.activeElement.id==='mcpUrl','copy fallback selects URL');
   assert.equal(w.document.getElementById('mcpUrl').selectionEnd,mcpUrl.length);
-  await load();w=dom.window;
+  await load();w=dom.window.eval('current().frame.contentWindow');
   await waitFor(()=>w.document.getElementById('mcpToggle').textContent==='MCP stoppen','MCP persists across reload');
   w.document.getElementById('mcpToggle').click();
   await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','MCP stop button');
@@ -83,7 +90,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   assert.equal(w.eval('doc.features[0].dimensions.find(d=>d.id==="width").value'),120);
   w.document.getElementById('undo').click();await waitFor(()=>w.metriccadSync.project.document.features[0].dimensions.find(d=>d.id==='width').value===110,'shared undo');
   assert.equal((await api('get_project',{project_id:project.id})).project.document.features[0].dimensions.find(d=>d.id==='width').value,110);
-  await load();w=dom.window;
+  await load();w=dom.window.eval('current().frame.contentWindow');
   assert.equal(w.eval('doc.features[0].dimensions.find(d=>d.id==="width").value'),110);
   assert.deepEqual(errors,[]);
   await waitFor(()=>w.document.getElementById('mcpState').textContent==='MCP aus','MCP ready to restart');
@@ -96,7 +103,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
     support:{plane:'XY'},geometry:[{id:'hole',type:'circle',x:30,y:0,a:4}],dimensions:[],relations:[]};
   const next={...pocket,id:'later',name:'Folgeskizze',op:'sketch'};
   project=(await api('create_project',{name:'Reparatur',document:{version:2,features:[native.features[0],pocket,next]}})).project;
-  await load();w=dom.window;
+  await load();w=dom.window.eval('current().frame.contentWindow');
   const node=label=>w.document.querySelector('#tree button[aria-label="'+label+'"]');
   node('Grundplatte').click();await w.document.getElementById('editSketchTool').onclick();
   w.eval('openDimensionEditor(cur().dimensions.find(d=>d.id==="width"))');
@@ -109,7 +116,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   assert.equal(node('Bohrung').lastChild.style.color,'rgb(255, 128, 128)');
   assert.equal(node('Tasche 1').lastChild.style.color,'rgb(255, 128, 128)');
   assert.equal(node('Folgeskizze').lastChild.style.color,'rgb(135, 147, 159)');
-  await load();w=dom.window;assert.equal(w.eval('mesh.failure.id'),'cut');
+  await load();w=dom.window.eval('current().frame.contentWindow');assert.equal(w.eval('mesh.failure.id'),'cut');
   node('Bohrung').click();await w.document.getElementById('editSketchTool').onclick();
   assert.equal(w.eval('context.id'),'cut');
   assert.equal(await w.eval("commitGeometry({...cur().geometry[0],x:0},'hole')"),true);
@@ -119,7 +126,7 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
   assert.equal(node('Tasche 1').lastChild.style.color,'');
   // Exercise the real handlers with in-memory file handles in place of OS dialogs.
   for(const route of ['/','/assembly']){
-    await load(route);w=dom.window;
+    await load(route);w=dom.window.eval('current().frame.contentWindow');
     const key=route==='/'?'features':'instances';
     assert.equal(w.eval('doc')[key].length,0);
     const input=route==='/'?native:w.eval('demoDocument()');
@@ -130,29 +137,30 @@ async function waitFor(check,label){const until=Date.now()+30000;while(Date.now(
         createWritable:async()=>({write:async text=>{if(failWrite)throw Error('Schreibfehler');contents=text;},close:async()=>{modified++;},abort:async()=>{}})};
     }
     let source=fileHandle('Modell.json',JSON.stringify(input)),destination=fileHandle('Kopie.json');
-    w.showOpenFilePicker=async()=>[source];w.showSaveFilePicker=async()=>{picks++;return destination;};
-    w.HTMLDialogElement.prototype.showModal=function(){this.returnValue=choice;this.onclose();};
-    const click=id=>w.document.getElementById(id).onclick();
+    const shell=dom.window;
+    shell.showOpenFilePicker=async()=>[source];shell.showSaveFilePicker=async()=>{picks++;return destination;};
+    shell.HTMLDialogElement.prototype.showModal=function(){this.returnValue=choice;this.onclose();};
+    const click=async id=>{await shell.metricProject.file(id);w=shell.eval('current().frame.contentWindow');};
     if(route==='/'){
       await w.eval("plane='XZ';newSketch()");
       const ok=await w.eval("commitGeometry({id:'first-rectangle',type:'rect',x:0,y:0,a:20,b:10,angle:0},null,{horizontal:true})");
       assert.equal(ok,true,w.document.getElementById('status').textContent);
       assert.equal(await w.metriccadSync.flush(),true);
       assert.equal(w.metriccadSync.project.document.features[0].support.plane,'XZ');
-      await click('padTool');
+      await w.document.getElementById('padTool').onclick();
       assert.ok(w.eval('mesh.volume')>0);
       assert.equal(await w.metriccadSync.flush(),true);
     }
     await click('save');await click('save');assert.equal(picks,1);
     await click('open');assert.equal(w.eval('doc')[key].length,input[key].length);
-    w.eval("doc.testNote='Bearbeitung'");await click('save');assert.equal(picks,1);
-    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,'Bearbeitung');
-    await click('saveAs');assert.equal(picks,2);w.eval("doc.testNote='Kopie'");
+    w.eval("doc.testNote='Bearbeitung'");await click('save');assert.equal(picks,2);
+    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,undefined);
+    await click('saveAs');assert.equal(picks,3);w.eval("doc.testNote='Kopie'");
     await click('new');assert.equal(w.eval('doc.testNote'),'Kopie'); // cancel
     choice='save';failWrite=true;await click('new');assert.equal(w.eval('doc.testNote'),'Kopie');
     failWrite=false;await click('new');assert.equal(w.eval('doc')[key].length,0);
-    assert.equal(JSON.parse(await (await destination.getFile()).text()).testNote,'Kopie');
-    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,'Bearbeitung');
+    assert.equal(JSON.parse(await (await destination.getFile()).text()).items[0].data.testNote,'Kopie');
+    assert.equal(JSON.parse(await (await source.getFile()).text()).testNote,undefined);
     source=fileHandle('Defekt.json','null');await click('open');assert.equal(w.eval('doc')[key].length,0);
     w.eval("doc.testNote='Verwerfen'");choice='discard';await click('new');assert.equal(w.eval('doc.testNote'),undefined);
   }

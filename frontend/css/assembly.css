@@ -52,3 +52,8 @@
 #pendingBar { justify-self: center; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; background: #162736f5; border: 1px solid #385065; border-radius: 8px; padding: 7px 10px; }
 .mate-marker.pending, .model-row.pending { color: #a2abb5; }
 .mate-marker.pending path { stroke-dasharray: 4 3; }
+
+.parameter-editor{color:#e0eaf4;background:#182635;border:1px solid #456077;border-radius:6px;width:min(340px,90vw)}
+.parameter-editor::backdrop{background:#08121bbb}
+.parameter-editor label,.parameter-editor input{display:block;width:100%;margin-bottom:6px}
+.parameter-editor p{color:#ffad98}

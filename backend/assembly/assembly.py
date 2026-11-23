@@ -12,8 +12,9 @@ def validate(raw):
     if not isinstance(raw,dict) or raw.get('format')!='MetricCAD-assembly' or raw.get('version')!=1:raise AssemblyError('Keine MetricCAD-Baugruppe (Formatversion 1)')
     d=copy.deepcopy(raw)
     d.setdefault('constraints',[])
+    d.setdefault('parameters',[])
     d.pop('_drag',None);d.pop('_drive',None)
-    for key,limit in [('parts',30),('instances',100),('joints',99),('constraints',200)]:
+    for key,limit in [('parts',30),('instances',100),('joints',99),('constraints',200),('parameters',200)]:
         if not isinstance(d.get(key),list) or len(d[key])>limit:raise AssemblyError(key+': ungültige Anzahl (max. '+str(limit)+')')
         ids=[]
         for x in d[key]:
@@ -21,6 +22,17 @@ def validate(raw):
             ids.append(ident(x.get('id')))
             if 'name' in x and not isinstance(x['name'],str):raise AssemblyError('Name muss Text sein')
         if len(set(ids))!=len(ids):raise AssemblyError('Doppelte IDs in '+key)
+    lengths={}
+    names=set()
+    for parameter in d['parameters']:
+        name=parameter.get('name','').strip()
+        if not name or name.casefold() in names:
+            raise AssemblyError('Bitte einen eindeutigen Parameternamen angeben.')
+        value=number(parameter.get('value'),name)
+        if value<0:raise AssemblyError(name+': Länge muss mindestens 0 mm betragen.')
+        parameter['name']=name
+        names.add(name.casefold())
+        lengths[parameter['id']]=value
     parts={p['id'] for p in d['parts']}
     for p in d['parts']:
         if not isinstance(p.get('document'),dict):raise AssemblyError('Teilprojekt fehlt')
@@ -56,7 +68,13 @@ def validate(raw):
             c['angle']=number(c.get('angle'),'Winkel')
             if not 0 <= c['angle'] <= 180:
                 raise AssemblyError('Winkel muss zwischen 0 und 180 Grad liegen')
-        if c['type']=='offset':c['offset']=number(c.get('offset',0),'Flächenabstand')
+        if 'parameterId' in c:
+            key=ident(c['parameterId'])
+            if c['type']!='offset' or key not in lengths:raise AssemblyError('Ungültiger Abstandsparameter.')
+            sign=c.get('parameterSign',1)
+            if type(sign) is not int or sign not in (-1,1):raise AssemblyError('Ungültige Abstandsrichtung.')
+            c['offset']=sign*lengths[key]
+        elif c['type']=='offset':c['offset']=number(c.get('offset',0),'Flächenabstand')
     return d
 
 def prepare(raw,include_mesh=False):

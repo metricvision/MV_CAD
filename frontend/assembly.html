@@ -1,13 +1,13 @@
 <!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MetricCAD · Baugruppe 0.21</title><link rel="stylesheet" href="/assembly.css"><link rel="stylesheet" href="/project_sync.css"></head><body>
 <header class="cad-header"><strong>◈ MetricCAD</strong>
 <button class="workspace-switch" popovertarget="workspace-menu" aria-label="Arbeitsbereich: Baugruppe">Baugruppe ▾</button>
-<div id="workspace-menu" class="cad-menu" popover><span aria-current="page">Baugruppe ✓</span><a href="/" target="_blank" rel="noopener">Part Studio ↗</a><a href="/drawing" target="_blank" rel="noopener">Zeichnung ↗</a><a href="/visualizer" target="_blank" rel="noopener">Visualisierung ↗</a></div>
+<div id="workspace-menu" class="cad-menu" popover></div>
 <div class="commands"><button id="new">Neu</button><button id="open">Öffnen</button><button id="save">Speichern</button><button popovertarget="file-menu">Datei ▾</button></div>
 <div id="file-menu" class="cad-menu" popover><button id="demo">Beispiel laden</button><button id="saveAs">Speichern unter …</button><button id="step">STEP exportieren</button></div>
 <div class="commands"><button id="undo" title="Rückgängig" aria-label="Rückgängig">↶</button><button id="redo" title="Wiederholen" aria-label="Wiederholen">↷</button></div></header>
 <nav id="assembly-tools" aria-label="Baugruppenwerkzeuge">
   <div class="tool-group" role="group" aria-label="Bauteile"><div class="tool-row">
-    <button id="import" title="Teil importieren" aria-label="Teil importieren"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7l7-4 8 4-8 4-7-4m7 4v10l8-4V7M6 14v3l7 4"/><path stroke="#59d7c1" d="M1 11h9M7 8l3 3-3 3"/></svg></button>
+    <button id="import" title="Projektteil einfügen" aria-label="Projektteil einfügen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7l7-4 8 4-8 4-7-4m7 4v10l8-4V7M6 14v3l7 4"/><path stroke="#59d7c1" d="M1 11h9M7 8l3 3-3 3"/></svg></button>
     <button id="duplicate" title="Instanz duplizieren (verknüpft)" aria-label="Instanz duplizieren (verknüpft)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 6l6-3 6 3-6 3-6-3v8l5 2M8 9v4m1 0 7-4 6 3-7 4-6-3v7l6 3 7-4v-7m-7 4v7"/></svg></button>
     <button id="copyPart" title="Unabhängige Bauteilkopie erstellen" aria-label="Unabhängige Bauteilkopie erstellen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h9l3 3v3M3 3v14h4M8 10l7-3 7 3-7 4-7-4v8l7 4 7-4v-8m-7 4v8"/><path stroke="#59d7c1" d="M5 5v5m-2.5-2.5h5"/></svg></button>
   </div></div>
@@ -35,4 +35,4 @@
   <div id="pendingBar" hidden><span id="pendingCount" aria-live="polite"></span><button id="discardPending">Verwerfen</button><button id="applyPending" class="primary">Bedingungen anwenden</button></div>
   <div id="motion"><select id="motionJoint" aria-label="Gelenk für Bewegung"></select><input id="motionSlider" type="range" aria-label="Gelenkstellung"><output id="motionValue"></output><button id="play">▶ Bewegung</button><button id="stop">■ Stopp</button><label>Periode <input id="period" type="number" min="1" max="120" value="6"> s</label></div></div></section>
 <aside id="inspector"><h2>Eigenschaften</h2><div id="properties"></div></aside></main><footer><span id="status">Bereit.</span><span>Starre Verbindung · Drehgelenk · Schubgelenk · Flächenbedingungen</span></footer>
-<input type="file" id="file" accept=".json,application/json" hidden><script src="/project_files.js"></script><script src="/assembly.js"></script></body></html>
+<script src="/editor.js"></script><script src="/assembly.js"></script></body></html>

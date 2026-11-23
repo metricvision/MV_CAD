@@ -34,14 +34,16 @@ const startup=new Promise((resolve,reject)=>{
   const launch={headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--enable-unsafe-swiftshader']};
   if(process.env.METRICCAD_CHROMIUM_EXECUTABLE)launch.executablePath=process.env.METRICCAD_CHROMIUM_EXECUTABLE;
   browser=await chromium.launch(launch);
-  const page=await browser.newPage({viewport:{width:1440,height:1000}});
-  const errors=[];page.on('pageerror',e=>errors.push(e.stack||e.message));
-  await page.goto(url+'/?project='+project.id);
+  const tab=await browser.newPage({viewport:{width:1440,height:1000}});
+  const errors=[];tab.on('pageerror',e=>errors.push(e.stack||e.message));
+  await tab.goto(url+'/?project='+project.id);
+  await tab.locator('iframe:visible').waitFor();
+  let page=tab.frame({url:url+'/editor/part'});
   await page.waitForFunction(()=>window.metriccadSync?.project && !busy);
   await page.waitForFunction(()=>document.getElementById('sharedProjectState').textContent.startsWith('Synchron'));
   assert.equal(await page.locator('#save').isEnabled(),true);
   assert.match(await page.locator('#tree').textContent(),/Grundplatte/);
-  if(output)await page.screenshot({path:path.join(output,'browser-model.png')});
+  if(output)await tab.screenshot({path:path.join(output,'browser-model.png')});
 
   // External edit becomes visible without reload.
   project=(await api('set_dimension',{project_id:project.id,expected_revision:project.revision,sketch_id:'plate',dimension_id:'width',value:100})).project;
@@ -56,7 +58,7 @@ const startup=new Promise((resolve,reject)=>{
     const label=await page.evaluate(()=>dimensionLabels.find(d=>d.id==='width'));
     assert.ok(label,'Width label must be visible');
     const bounds=await page.locator('#overlay').boundingBox();
-    await page.mouse.click(bounds.x+label.x,bounds.y+label.y);
+    await tab.mouse.click(bounds.x+label.x,bounds.y+label.y);
     await page.locator('#dimValue').waitFor({state:'visible'});
   }
   await openWidth();await page.locator('#dimValue').fill('110');await page.locator('#dimValue').press('Enter');
@@ -76,16 +78,19 @@ const startup=new Promise((resolve,reject)=>{
   await page.waitForFunction(()=>window.metriccadSync.conflict);
   assert.equal(await page.evaluate(()=>doc.features[0].dimensions.find(d=>d.id==='width').value),115);
   assert.equal((await api('get_project',{project_id:project.id})).project.document.features[0].dimensions.find(d=>d.id==='width').value,120);
-  if(output)await page.screenshot({path:path.join(output,'browser-conflict.png')});
-  page.once('dialog',dialog=>dialog.accept());await page.locator('#sharedProjectReload').click();
+  if(output)await tab.screenshot({path:path.join(output,'browser-conflict.png')});
+  tab.once('dialog',dialog=>dialog.accept());await page.locator('#sharedProjectReload').click();
   await page.waitForFunction(()=>!window.metriccadSync.conflict && doc.features[0].dimensions.find(d=>d.id==='width').value===120);
 
   // Reopening restores the shared project; original assembly workspace still loads.
-  await page.reload();await page.waitForFunction(()=>window.metriccadSync?.project?.document.features[0].dimensions.find(d=>d.id==='width').value===120);
+  await tab.reload();await tab.locator('iframe:visible').waitFor();page=tab.frame({url:url+'/editor/part'});await page.waitForFunction(()=>window.metriccadSync?.project?.document.features[0].dimensions.find(d=>d.id==='width').value===120);
   const assembly=await browser.newPage();assembly.on('pageerror',e=>errors.push(e.message));
-  await assembly.goto(url+'/assembly');await assembly.locator('#demo').click();
-  await assembly.waitForFunction(()=>doc.instances.length===3&&!busy);
-  assert.equal(await assembly.evaluate(()=>doc.joints.length),2);
+  await assembly.goto(url+'/assembly');
+  const editor=assembly.frameLocator('iframe:visible');
+  await editor.getByRole('button',{name:'Datei ▾'}).click();
+  await editor.locator('#demo').click();
+  await assembly.waitForFunction(()=>current()?.editor.snapshot().instances.length===3);
+  assert.equal(await assembly.evaluate(()=>current().editor.snapshot().joints.length),2);
   assert.deepEqual(errors,[]);
   console.log('PASS: browser load, live external edit, canvas dimension edit, complete rebuild, conflict preservation, reload, assembly demo.');
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{

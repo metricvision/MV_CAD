@@ -3,7 +3,9 @@ import json
 import math
 
 import cadquery as cq
+from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepLib import BRepLib
+from OCP.GeomAbs import GeomAbs_Torus
 from OCP.HLRAlgo import HLRAlgo_Projector
 from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf
@@ -31,10 +33,35 @@ def outline(edge):
 
 
 def signature(points, kind, center=None, radius=None):
-    # Only complete straight edges and true circles can own dimensions.
+    # Rounded geometry matches projected strokes; it is never saved as a dimension ID.
     if kind == 'LINE':
         return ('line', *sorted(tuple(round(v, 4) for v in p) for p in points))
     return ('circle', *(round(v, 4) for v in center), round(radius, 4))
+
+
+def rotational_faces(registry, location):
+    # Follow the model's persistent face names, including assembly placement.
+    named = {entry['faces'][0]: key for key, entry in registry.items() if len(entry['faces']) == 1}
+    for face, key in named.items():
+        if face.geomType() not in ('CYLINDER','TORUS'):
+            continue
+        face = face.moved(location)
+        u0, u1, v0, v1 = face.uvBounds()
+        if u1-u0 < 2*math.pi-1e-7:  # A corner round is not a shaft section.
+            continue
+        yield key, BRepAdaptor_Surface(face.wrapped), v0, v1
+
+
+def cylinder_section(instance, key, cylinder, v0, v1):
+    origin = cq.Vector(cylinder.Location())
+    axis = cq.Vector(cylinder.Axis().Direction())
+    ends = [origin + axis*t for t in (v0, v1)]
+    # A common orientation groups coaxial faces even when their UV axes oppose.
+    if max(axis.toTuple(), key=abs) < 0:
+        axis = axis.multiply(-1)
+    foot = origin-axis*origin.dot(axis)
+    group = (instance, *(round(x, 6) for x in (*axis.toTuple(), *foot.toTuple())))
+    return instance, key, group, ends, axis, cylinder.Radius()
 
 
 def project(payload):
@@ -52,6 +79,8 @@ def project(payload):
     built = {}
     objects = []
     refs = []
+    cylinders = []
+    rounds = []
     projection = payload.get('projection') or {}
     face_key = projection.get('face')
     normal, right = cq.Vector(0,-1,0), cq.Vector(1,0,0)
@@ -80,6 +109,11 @@ def project(payload):
                 normal, right = direction(frame['n']), direction(frame['u'])
                 found = True
         objects.append(body.moved(location))
+        for key, surface, v0, v1 in rotational_faces(registry, location):
+            if surface.GetType() == GeomAbs_Torus:
+                rounds.append((instance, key, surface, v0, v1))
+            else:
+                cylinders.append(cylinder_section(instance, key, surface.Cylinder(), v0, v1))
         for item in catalog:
             if item['ref'] and not item['ref'].get('chain'):
                 ref = json.dumps([instance,item['ref']], sort_keys=True, separators=(',', ':'))
@@ -107,6 +141,43 @@ def project(payload):
         def point(v):
             return [round(v.dot(cq.Vector(right)), 6), round(-v.dot(cq.Vector(up)), 6)]
         lookup = {}
+        sight = cq.Vector(normal)
+        # In an axial view each meridian of a shoulder fillet is a true radius.
+        arcs = {}
+        def add_arc(ref, ends, center, tip, radius, depth):
+            key = signature(ends, 'LINE')
+            arcs.setdefault(key, []).append((depth, dict(ref=ref, arcCenter=center,
+                                                         radiusPoint=tip, radius=radius)))
+        for instance, key, surface, v0, v1 in rounds:
+            torus = surface.Torus()
+            axis = cq.Vector(torus.Axis().Direction())
+            if abs(axis.dot(sight)) > 1e-7:
+                continue
+            for side in (-1, 1):
+                radial = sight.cross(axis).normalized()*side
+                u = math.atan2(radial.dot(cq.Vector(torus.YAxis().Direction())),
+                               radial.dot(cq.Vector(torus.XAxis().Direction())))
+                ends = [point(cq.Vector(surface.Value(u,v))) for v in (v0,v1)]
+                tip = cq.Vector(surface.Value(u,(v0+v1)/2))
+                center = cq.Vector(torus.Location()) + radial*torus.MajorRadius()
+                add_arc(json.dumps([instance,'round',key,side]), ends, point(center),
+                        point(tip), torus.MinorRadius(), tip.dot(sight))
+        sections = {}
+        axis_ends = {}
+        for instance, key, group, ends, axis, radius in cylinders:
+            if abs(axis.dot(sight)) > 1e-7:
+                continue
+            axis_ends.setdefault(group, []).extend(point(p) for p in ends)
+            radial = sight.cross(axis).normalized()*radius
+            for side in (-1, 1):
+                span = [point(p+radial*side) for p in ends]
+                sig = signature(span, 'LINE')
+                depth = ends[0].dot(sight)
+                if sig not in sections or depth > sections[sig][0]:
+                    ref = json.dumps([instance, 'cylinder', key, side])
+                    mid = (ends[0]+ends[1])*0.5
+                    cross_section = [point(mid-radial), point(mid+radial)]
+                    sections[sig] = depth, ref, group, cross_section, 2*radius
         for ref, edge in refs:
             kind = edge.geomType()
             if kind == 'LINE':
@@ -114,8 +185,18 @@ def project(payload):
                 if math.dist(*pts) < 1e-6:
                     continue
                 sig = signature(pts, kind)
+            elif kind == 'CIRCLE' and not edge.IsClosed() and abs(edge.normal().dot(sight)) > .999999:
+                tip = edge.positionAt(.5)
+                add_arc(ref, [point(edge.startPoint()), point(edge.endPoint())],
+                        point(edge.arcCenter()), point(tip), edge.radius(), tip.dot(sight))
+                continue
             elif kind == 'CIRCLE' and edge.IsClosed() and abs(edge.normal().dot(cq.Vector(normal))) > .999999:
                 sig = signature([], kind, point(edge.arcCenter()), edge.radius())
+            elif kind == 'CIRCLE' and edge.IsClosed() and abs(edge.normal().dot(sight)) < 1e-7:
+                center = edge.arcCenter()
+                radial = sight.cross(edge.normal()).normalized()*edge.radius()
+                sig = signature([point(center-radial), point(center+radial)], 'LINE')
+                ref = json.dumps(['edge-on', ref])
             else:
                 continue
             # The frontmost coincident projection owns the visible reference.
@@ -129,6 +210,7 @@ def project(payload):
         algo.Hide()
         hlr = HLRBRep_HLRToShape(algo)
         lines = []
+        visible_axes = set()
         for group in (hlr.VCompound(), hlr.OutLineVCompound(), hlr.Rg1LineVCompound()):
             for edge in edges_in(group):
                 pts = outline(edge)
@@ -143,13 +225,47 @@ def project(payload):
                 elif edge.geomType() == 'CIRCLE' and edge.IsClosed():
                     item.update(center=xy(edge.arcCenter()), diameter=2*edge.radius())
                     sig = signature([], 'CIRCLE', item['center'], edge.radius())
+                elif len(pts) > 2:
+                    # HLR can return an edge-on ring as a sampled, degenerate ellipse.
+                    span = [min(pts), max(pts)]
+                    sig = signature(span, 'LINE')
+                    (x,y),(u,v) = span
+                    length = math.dist(*span)
+                    if sig in lookup and length > 1e-7 and all(
+                        abs((u-x)*(b-y)-(v-y)*(a-x)) <= 2e-6*length for a,b in pts
+                    ):
+                        item['ends'] = span
+                    else:
+                        sig = None
                 if sig in lookup:
                     item['ref'] = lookup[sig][1]
+                if sig in sections:
+                    depth, ref, axis_group, cross_section, diameter = sections[sig]
+                    if depth >= lookup.get(sig, (-math.inf,))[0]-1e-7:
+                        if sig not in lookup or depth > lookup[sig][0]+1e-7:
+                            item['ref'] = ref
+                        item.update(diameter=diameter, diameterEnds=cross_section)
+                        visible_axes.add(axis_group)
+                if arcs and not edge.IsClosed() and edge.geomType() != 'LINE':
+                    candidates = arcs.get(signature([pts[0],pts[-1]], 'LINE'), ())
+                    if candidates:
+                        mid = xy(edge.positionAt(.5))
+                        matches = sorted(((depth, arc) for depth, arc in candidates
+                                          if math.dist(arc['radiusPoint'], mid) <= max(1e-5, 5e-4*arc['radius'])),
+                                         key=lambda match:match[0], reverse=True)
+                        if matches and (len(matches)==1 or matches[0][0]-matches[1][0]>1e-7):
+                            item.update(matches[0][1])
                 lines.append(item)
         for group in (hlr.HCompound(), hlr.OutLineHCompound(), hlr.Rg1LineHCompound()):
             for edge in edges_in(group):
                 points = outline(edge)
                 if len(points) >= 2:
                     lines.append({'points': points, 'hidden': True})
+        for group in sorted(visible_axes):
+            ends = axis_ends[group]
+            # Sort on the dominant coordinate to handle vertical and rotated shafts.
+            dim = max((0, 1), key=lambda i: max(p[i] for p in ends)-min(p[i] for p in ends))
+            ordered = sorted(ends, key=lambda p: p[dim])
+            lines.append({'axis': True, 'points': [ordered[0], ordered[-1]]})
         result[name] = lines
     return result

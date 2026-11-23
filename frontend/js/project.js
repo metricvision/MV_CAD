@@ -1,0 +1,166 @@
+'use strict';
+const $=id=>document.getElementById(id);
+const model=ProjectModel;
+let doc=model.empty(),active=null,frames=new Map(),recent=new Map(),servers=new Map(),working=false,timer;
+function status(message,error=false){
+  clearTimeout(timer);$('status').textContent=message;
+  timer=setTimeout(()=>{$('status').textContent='';},error?10000:3500);
+}
+function entry(){return model.get(doc,active);}
+function current(){return frames.get(active);}
+function dirty(){const f=current();return !!f && JSON.stringify(f.editor.snapshot())!==f.snapshot;}
+async function capture(){
+  const f=current();
+  if(!f)return;
+  if(f.editor.blocked?.())throw Error('Bitte die laufende Bearbeitung zuerst abschließen.');
+  await f.editor.flush?.();
+  if(f.editor.serverId)servers.set(active,f.editor.serverId());
+  if(dirty() || !entry().data){
+    model.store(doc,entry(),f.editor.snapshot());
+    f.snapshot=JSON.stringify(f.editor.snapshot());
+    f.input=JSON.stringify(model.expand(doc,entry()));
+  }
+}
+async function run(action){
+  if(working||files.active)return;
+  working=true;document.body.inert=true;
+  try{await capture();await action();}
+  catch(e){if(e.name!=='AbortError')status(e.message,true);}
+  finally{document.body.inert=false;working=false;}
+}
+async function openItem(item,serverId=null){
+  const value=model.expand(doc,item),input=JSON.stringify(value);
+  let f=frames.get(item.id);
+  if(!f){
+    const frame=document.createElement('iframe');
+    frame.title=item.name;frame.style.visibility='hidden';
+    frame.src='/editor/'+item.kind;
+    const loaded=new Promise(resolve=>frame.onload=resolve);document.body.prepend(frame);
+    try{
+      await loaded;
+      const editor=frame.contentWindow.projectEditor;
+      if(!editor)throw Error('Arbeitsbereich konnte nicht gestartet werden.');
+      if(await editor.load(value,item.name,serverId||servers.get(item.id))===false)throw Error('Modell konnte nicht geöffnet werden.');
+      f={frame,editor,input,snapshot:JSON.stringify(editor.snapshot())};
+      frames.set(item.id,f);
+    }catch(e){frame.remove();throw e;}
+  }else if(f.input!==input){
+    if(await (f.editor.refresh||f.editor.load)(value,item.name)===false)throw Error('Modell konnte nicht aktualisiert werden. Bitte Teil und Bedingungen prüfen.');
+    f.input=input;f.snapshot=JSON.stringify(f.editor.snapshot());
+  }
+  // Large models own WebGL contexts. Keep only the last editor of each kind alive.
+  const previous=recent.get(item.kind);
+  if(previous && previous!==item.id){
+    frames.get(previous)?.frame.remove();frames.delete(previous);
+  }
+  if(current())current().frame.hidden=true;
+  active=item.id;recent.set(item.kind,item.id);f.frame.hidden=false;f.frame.style.visibility='';
+  model.store(doc,item,f.editor.snapshot());
+  f.input=JSON.stringify(model.expand(doc,item));
+  f.frame.title=item.name;document.title=item.name+' · MetricCAD';f.frame.focus();
+}
+async function create(kind,name,serverId=null){
+  const item=model.add(doc,kind,name);
+  try{await openItem(item,serverId);}
+  catch(e){doc.items.splice(doc.items.indexOf(item),1);throw e;}
+}
+function button(container,label,click){
+  const b=document.createElement('button');b.textContent=label;b.onclick=click;container.append(b);return b;
+}
+function tree(){
+  const list=$('entries');list.replaceChildren();
+  for(const [kind,title] of Object.entries(model.labels)){
+    const group=document.createElement('section');list.append(group);
+    const heading=document.createElement('strong');heading.textContent=title;group.append(heading);
+    button(group,'＋',()=>{
+      const name=prompt(title+' anlegen',title+' '+(doc.items.filter(i=>i.kind===kind).length+1));
+      if(name?.trim()){$('tree').close();run(()=>create(kind,name.trim()));}
+    }).title=title+' anlegen';
+    for(const i of doc.items.filter(i=>i.kind===kind)){
+      const b=button(group,i.name,()=>{$('tree').close();run(()=>openItem(i));});
+      b.className='entry';b.setAttribute('aria-current',String(i.id===active));
+      for(const sheet of i.data?.sheets||[]){
+        const row=button(group,'↳ '+(sheet.title||'Blatt '+(i.data.sheets.indexOf(sheet)+1)),()=>{
+          $('tree').close();run(async()=>{await openItem(i);await current().editor.sheet(sheet);});
+        });
+        row.className='entry';
+      }
+    }
+  }
+  $('tree').showModal();
+}
+function pick(kind){
+  const candidates=doc.items.filter(i=>i.kind===kind);
+  if(!candidates.length)throw Error('Kein passendes Modell im Projekt. Bitte zuerst anlegen oder importieren.');
+  const dialog=document.createElement('dialog'),heading=document.createElement('h2');
+  heading.textContent=model.labels[kind]+' auswählen';dialog.append(heading);document.body.append(dialog);
+  return new Promise(resolve=>{
+    let selected=null;
+    for(const i of candidates)button(dialog,i.name,()=>{selected=i;dialog.close();}).className='entry';
+    button(dialog,'Abbrechen',()=>dialog.close());
+    dialog.onclose=()=>{dialog.remove();resolve(selected);};dialog.showModal();
+  });
+}
+async function link(kind){
+  const source=await pick(kind);
+  if(!source)return;
+  const old=entry();
+  if(old.source===source.id)return;
+  if(old.source)await create(old.kind,model.labels[old.kind]+' · '+source.name);
+  try{
+    const f=current();await f.editor.link(model.expand(doc,source),source.name);
+    entry().source=source.id;
+    if(entry().name===model.labels[entry().kind])entry().name+=' · '+source.name;
+    await capture();
+  }catch(e){if(old.id!==active){const failed=entry();current().frame.remove();frames.delete(active);doc.items.splice(doc.items.indexOf(failed),1);await openItem(old);}throw e;}
+}
+const startKind=({'/assembly':'assembly','/assembly.html':'assembly','/drawing':'drawing','/visualizer':'visualizer'})[location.pathname]||'part';
+async function replace(value,name){
+  const old={doc,active,frames,recent,servers};
+  let next=model.empty(),first,legacy=false;
+  if(value?.format==='MetricCAD-project'){next=model.validate(value);first=next.items[0];}
+  else if(value){legacy=true;first=model.importItem(next,value,name.replace(/(?:\.metriccad)?\.json$/i,''));}
+  doc=next;active=null;frames=new Map();recent=new Map();servers=new Map();
+  try{
+    if(first)await openItem(first);
+    else await create(startKind,model.labels[startKind],!value && !old.active?new URLSearchParams(location.search).get('project'):null);
+  }catch(e){doc=old.doc;active=old.active;frames=old.frames;recent=old.recent;servers=old.servers;throw e;}
+  for(const f of old.frames.values())f.frame.remove();
+  if(old.active && location.search)window.history.replaceState(null,'',location.pathname);
+  return legacy?'imported':true;
+}
+async function importDocument(value,name){
+  const staging=model.empty(),item=model.importItem(staging,value,name);
+  model.validate(staging);doc.items.push(...staging.items);
+  try{await openItem(item);}catch(e){doc.items.splice(-staging.items.length);throw e;}
+}
+const files=bindProjectFiles({defaultName:'Projekt.metriccad.json',prepare:capture,editorDirty:dirty,replace});
+window.metricProject={
+  workspace:kind=>run(async()=>{
+    const item=doc.items.find(i=>i.id===recent.get(kind))||doc.items.find(i=>i.kind===kind);
+    if(item)await openItem(item);else await create(kind,model.labels[kind]);
+  }),
+  file:id=>{if(!working)return files[id]();},
+  tree:()=>run(tree),
+  insert:()=>run(async()=>{const part=await pick('part');if(part)await current().editor.insert(part);}),
+  editPart:local=>run(()=>openItem(model.get(doc,entry().data.parts.find(p=>p.id===local).projectPartId))),
+  link:kind=>run(()=>link(kind)),
+  importFile:()=>run(async()=>{
+    const [handle]=await showOpenFilePicker({types:[{description:'MetricCAD JSON',accept:{'application/json':['.json']}}]});
+    const file=await handle.getFile();
+    await importDocument(JSON.parse(await file.text()),file.name.replace(/(?:\.metriccad)?\.json$/i,''));
+  }),
+  exportFile:()=>run(async()=>{
+    const handle=await showSaveFilePicker({suggestedName:entry().name+'.metriccad.json'});
+    const out=model.expand(doc,entry());
+    function standalone(value){for(const p of value?.parts||[])delete p.projectPartId;}
+    standalone(out);standalone(out.model);
+    const writer=await handle.createWritable();try{await writer.write(JSON.stringify(out,null,2));await writer.close();}catch(e){await writer.abort().catch(()=>{});throw e;}
+  }),
+  addDocument:(value,name)=>run(()=>importDocument(value,name)),
+  serverPart:(id,name)=>run(()=>{
+    const existing=doc.items.find(i=>servers.get(i.id)===id);
+    return existing?openItem(existing):create('part',name,id);
+  })
+};
+replace(null).then(()=>files.markClean()).catch(e=>status(e.message,true));

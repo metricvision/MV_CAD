@@ -26,6 +26,42 @@ def assembly(kind, **options):
 
 
 class AssemblyConditions(unittest.TestCase):
+    def test_shared_offset_parameter(self):
+        doc = assembly('offset', parameterId='spacing', parameterSign=1)
+        mate = doc['constraints'][0]
+        mate['childFace'] = 'base/end'
+        doc['parameters'] = [dict(id='spacing', name='Fachhöhe', value=25)]
+        doc['instances'].append(dict(id='c', part='plate'))
+        doc['constraints'].append(dict(mate, id='second', child='c', parameterSign=-1))
+        for spacing in (25, 40, 0):
+            doc['parameters'][0].update(name='Abstand', value=spacing)
+            result = prepare(json.loads(json.dumps(doc)))
+            self.assertAlmostEqual(result['transforms']['b'][2][3], spacing, places=5)
+            self.assertAlmostEqual(result['transforms']['c'][2][3], -spacing, places=5)
+            doc = result['document']
+        # Unlinking holds the last numeric value. The other face pair still follows.
+        del doc['constraints'][1]['parameterId'], doc['constraints'][1]['parameterSign']
+        doc['parameters'][0]['value'] = 12
+        result = prepare(doc)
+        self.assertEqual([c['offset'] for c in result['document']['constraints']], [12, 0])
+
+    def test_invalid_or_conflicting_offset_parameter(self):
+        doc = assembly('offset', parameterId='p')
+        doc['constraints'][0]['childFace'] = 'base/end'
+        with self.assertRaises(AssemblyError):
+            prepare(doc)
+        doc['parameters'] = [dict(id='p', name='Abstand', value=18)]
+        doc['instances'][1]['fixed'] = True
+        accepted = prepare(doc)['document']
+        candidate = json.loads(json.dumps(accepted))
+        candidate['parameters'][0]['value'] = 50
+        with self.assertRaises(AssemblyError):
+            prepare(candidate)
+        self.assertEqual(prepare(accepted)['document']['constraints'][0]['offset'], 18)
+        doc['parameters'].append(dict(id='other', name=' abstand ', value=18))
+        with self.assertRaises(AssemblyError):
+            prepare(doc)
+
     def test_tangent_sides_drag_and_reload(self):
         for opposed in (False, True):
             result = prepare(assembly('tangent', opposed=opposed))

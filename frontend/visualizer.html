@@ -10,7 +10,7 @@ aside input[type=color]{height:32px}.coords{display:flex;gap:5px}.coords label{f
 #renderProgress{width:9em;accent-color:#25ac9c}#imageScale{margin:0 .6em;font-variant-numeric:tabular-nums}dialog a{color:#80ddd1;margin-right:1em}
 </style></head><body>
 <header class="cad-header"><strong>◈ MetricCAD</strong><button class="workspace-switch" popovertarget="workspace-menu">Visualisierung ▾</button>
-<div id="workspace-menu" class="cad-menu" popover><a href="/" target="_blank" rel="noopener">Part Studio ↗</a><a href="/assembly" target="_blank" rel="noopener">Baugruppe ↗</a><a href="/drawing" target="_blank" rel="noopener">Zeichnung ↗</a><span aria-current="page">Visualisierung ✓</span></div>
+<div id="workspace-menu" class="cad-menu" popover></div>
 <div class="commands"><button id="new">Neu</button><button id="open">Öffnen</button><button id="save">Speichern</button><button popovertarget="file-menu">Datei ▾</button></div>
 <div id="file-menu" class="cad-menu" popover><button id="saveAs">Speichern unter …</button></div>
 </header>
@@ -32,4 +32,4 @@ aside input[type=color]{height:32px}.coords{display:flex;gap:5px}.coords label{f
 <button type="submit">Speichern</button> <button id="cancelPath" type="button">Abbrechen</button>
 </form></dialog>
 <dialog id="result"><div id="imageViewport" title="Mausrad zum Zoomen · Ziehen zum Verschieben"><img id="image" draggable="false" alt="Cycles-Rendering"></div><button id="imageFit">Einpassen</button> <button id="imageActual" title="Originalgröße">1:1</button><output id="imageScale"></output><a id="download" download="MetricCAD-Rendering.png">PNG speichern</a><button id="close">Schließen</button></dialog>
-<script src="/project_files.js"></script><script src="/visualizer_view.js"></script><script src="/visualizer.js"></script></body></html>
+<script src="/editor.js"></script><script src="/visualizer_view.js"></script><script src="/visualizer.js"></script></body></html>

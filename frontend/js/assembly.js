@@ -2,13 +2,19 @@
 const $=id=>document.getElementById(id),clone=x=>structuredClone(x),uid=()=>crypto.randomUUID();
 const pendingConstraints=new Map();
 const fresh=()=>({format:'MetricCAD-assembly',version:1,parts:[],instances:[],joints:[],constraints:[]});
-let doc=fresh(),assets={},solution={transforms:{},poses:{},roots:[],dof:0,jointFrames:{}},selected=null,selectedJoint=null,history=[],future=[],busy=false,fileAction='import',replacePart=null,pick=null,jointDraft=null,animation=null,motionBefore=null;
+let doc=fresh(),assets={},solution={transforms:{},poses:{},roots:[],dof:0,jointFrames:{}},selected=null,selectedJoint=null,history=[],future=[],busy=false,pick=null,jointDraft=null,animation=null,motionBefore=null;
 let constraintDraft=null,selectedConstraint=null,transformMode=null,hoverFace=null,dragState=null,previewQueue=null,previewTask=null,previewError=null,previewToken=0;
 function status(s,error=false){$('status').textContent=s;$('status').className=error?'error':''}
 async function request(path,payload){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok){const x=await r.json();throw Error(x.error||'Berechnung fehlgeschlagen')}return r}
 async function commit(candidate,withMeshes=false,record=true){if(busy||animation||dragState)return false;busy=true;renderControls();status('Baugruppe wird berechnet …');try{const r=await(await request(withMeshes?'/assembly/build':'/assembly/solve',candidate)).json();if(record){history.push(JSON.stringify(doc));if(history.length>40)history.shift();future=[]}doc=r.document;solution=r;
     for(const [id,c] of pendingConstraints){
         if(doc.constraints?.some(item=>item.id===id)||!doc.instances.some(i=>i.id===c.parent)||!doc.instances.some(i=>i.id===c.child))pendingConstraints.delete(id);
+    }
+    for(const c of pendingConstraints.values()){
+        if(!c.parameterId)continue;
+        const p=doc.parameters?.find(p=>p.id===c.parameterId);
+        if(p)c.offset=p.value*(c.parameterSign??1);
+        else detachParameter(c);
     }
     if(r.parts){assets=r.parts;prepareBuffers()}selected=doc.instances.some(i=>i.id===selected)?selected:null;selectedJoint=doc.joints.some(j=>j.id===selectedJoint)?selectedJoint:null;jointDraft=null;constraintDraft=null;pick=null;render();status('Aktuell · '+r.dof+' freie Bewegungsparameter');return true}catch(e){status(e.message,true);return false}finally{busy=false;render()}}
 function download(data,name,type='application/json'){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
@@ -109,9 +115,17 @@ function renderTree() {
             }
         }
     }
-    const parts=$('parts');parts.replaceChildren();for(const p of doc.parts){const row=el('div',undefined,parts);note(row,p.name||p.id);button(row,'＋ Instanz',()=>addInstance(p.id));button(row,'Im Part Design bearbeiten ↗',()=>openPartEditor(p.id));button(row,'Teil aktualisieren …',()=>{replacePart=p.id;fileAction='replace';$('file').click()})}}
-function addInstance(part){const d=clone(doc),n=d.instances.length;const id=uid();d.instances.push({id,part,name:(d.parts.find(p=>p.id===part)?.name||'Teil')+' · '+(n+1),pose:{position:[n?30:0,0,0],rotation:[0,0,0]},fixed:n===0});selected=id;commit(d).then(ok=>{if(ok)fit()})}
-function renderProperties(){const pane=$('properties');pane.oninput=null;pane.replaceChildren();if(constraintDraft){constraintEditor(pane);return}if(jointDraft){jointEditor(pane);return}if(selectedJoint){const j=doc.joints.find(j=>j.id===selectedJoint);if(j){editJoint(j.id);return}}const i=doc.instances.find(i=>i.id===selected);if(!i){note(pane,'Teil im Modell oder Baum anklicken. Für eine Bewegung anschließend ein Gelenk anlegen.');note(pane,'Die erste Instanz wird fixiert. Jede weitere Instanz kann unabhängig platziert oder als Kind eines Gelenks verbunden werden.');return}el('h3',i.name||'Instanz',pane);button(pane,'Im Part Design bearbeiten ↗',()=>openPartEditor(i.part),'primary');note(pane,'Bearbeitet die gemeinsame Teildefinition für '+doc.instances.filter(x=>x.part===i.part).length+' Instanz(en).');const incoming=doc.joints.find(j=>j.child===i.id);const name=textInput(pane,'Name',i.name||'');
+    if(treeRow(tree,'Parameter','folder',null,'parameters')){
+        const list=el('div',undefined,tree);
+        list.className='model-children';
+        for(const p of doc.parameters||[]){
+            treeRow(list,p.name+' · '+p.value+' mm','offsetTool',()=>editParameter(p));
+        }
+        button(list,'＋ Längenparameter',()=>editParameter());
+    }
+    const parts=$('parts');parts.replaceChildren();for(const p of doc.parts){const row=el('div',undefined,parts);note(row,p.name||p.id);button(row,'＋ Instanz',()=>addInstance(p.id));button(row,'Im Part Design bearbeiten',()=>openPartEditor(p.id))}}
+function addInstance(part){const d=clone(doc),n=d.instances.length;const id=uid();d.instances.push({id,part,name:(d.parts.find(p=>p.id===part)?.name||'Teil')+' · '+(n+1),pose:{position:[n?30:0,0,0],rotation:[0,0,0]},fixed:n===0});selected=id;return commit(d).then(ok=>{if(ok)fit()})}
+function renderProperties(){const pane=$('properties');pane.oninput=null;pane.replaceChildren();if(constraintDraft){constraintEditor(pane);return}if(jointDraft){jointEditor(pane);return}if(selectedJoint){const j=doc.joints.find(j=>j.id===selectedJoint);if(j){editJoint(j.id);return}}const i=doc.instances.find(i=>i.id===selected);if(!i){note(pane,'Teil im Modell oder Baum anklicken. Für eine Bewegung anschließend ein Gelenk anlegen.');note(pane,'Die erste Instanz wird fixiert. Jede weitere Instanz kann unabhängig platziert oder als Kind eines Gelenks verbunden werden.');return}el('h3',i.name||'Instanz',pane);button(pane,'Im Part Design bearbeiten',()=>openPartEditor(i.part),'primary');note(pane,'Bearbeitet die gemeinsame Teildefinition für '+doc.instances.filter(x=>x.part===i.part).length+' Instanz(en).');const incoming=doc.joints.find(j=>j.child===i.id);const name=textInput(pane,'Name',i.name||'');
     const colorLabel=el('label','Farbe dieser Instanz',pane);
     const color=el('input',undefined,colorLabel);
     color.type='color';
@@ -148,14 +162,29 @@ $('stop').onclick=async()=>{animation=null;await finishMotion();render()};
 async function undo(redo=false){if(busy||animation||motionBefore)return;const from=redo?future:history,to=redo?history:future;if(!from.length)return;const before=JSON.stringify(doc),target=from.at(-1);if(await commit(JSON.parse(target),true,false)){from.pop();to.push(before);renderControls()}}
 $('undo').onclick=()=>undo();$('redo').onclick=()=>undo(true);
 async function replaceAssembly(value) {
-  if(value!==null && value?.format!=='MetricCAD-assembly')throw Error('Bitte eine Baugruppen-JSON wählen. Einzelteile über „Teil-JSON importieren“ einfügen.');
+  if(value!==null && value?.format!=='MetricCAD-assembly')throw Error('Ungültige Baugruppe.');
   if(!await commit(value??fresh(),true,false))return false;
   pendingConstraints.clear();history=[];future=[];selected=selectedJoint=selectedConstraint=null;
-  invalidatePartEditors();fit();render();return true;
+  fit();render();return true;
 }
-const assemblyFiles=bindProjectFiles({defaultName:'MetricCAD-Baugruppe.json',blocked:()=>busy||animation||motionBefore||dragState,replace:replaceAssembly});
-$('import').onclick=()=>{fileAction='import';$('file').click()};
-$('file').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file||busy||animation)return;try{if(file.size>4000000)throw Error('Datei größer als 4 MB');const value=JSON.parse(await file.text());const d=clone(doc);if(fileAction==='replace'){d.parts.find(p=>p.id===replacePart).document=value}else{const id=uid(),instance=uid(),name=file.name.replace(/\.json$/i,'');d.parts.push({id,name,document:value});d.instances.push({id:instance,part:id,name,pose:{position:[0,0,0],rotation:[0,0,0]},fixed:d.instances.length===0});selected=instance}if(await commit(d,true))fit()}catch(e){status(e.message,true)}};
+registerEditor({
+    blocked:()=>busy||animation||motionBefore||dragState||pendingConstraints.size,
+    load:value=>value?replaceAssembly(value):true,
+    async refresh(value){
+        if(!await commit(value,true,false))return false;
+        history=[];future=[];renderControls();return true;
+    },
+    async insert(part){
+        const existing=doc.parts.find(p=>p.projectPartId===part.id);
+        if(existing)return addInstance(existing.id);
+        const d=clone(doc),id=uid(),instance=uid();
+        d.parts.push({id,name:part.name,projectPartId:part.id,document:clone(part.data)});
+        d.instances.push({id:instance,part:id,name:part.name,pose:{position:[0,0,0],rotation:[0,0,0]},fixed:!d.instances.length});
+        selected=instance;if(await commit(d,true))fit();
+    }
+});
+$('import').onclick=()=>host.insert();
+function openPartEditor(id){host.editPart(id);}
 async function copyInstance(independent){
     const source=doc.instances.find(instance=>instance.id===selected);
     if(!source||busy||animation||motionBefore||dragState)return;
@@ -169,7 +198,7 @@ async function copyInstance(independent){
     if(independent){
         const original=doc.parts.find(part=>part.id===source.part);
         const part=clone(original);
-        part.id=uid();
+        part.id=uid();part.projectPartId=uid();
         const base=(original.name||'Teil')+' Kopie';
         part.name=base;
         for(let n=2;candidate.parts.some(item=>item.name===part.name);n++)part.name=base+' '+n;
@@ -276,7 +305,84 @@ for (const mode of ['move', 'rotate']) {
             : 'Teil auswählen und einen Achspfeil oder eine Ebenenfläche ziehen.');
     };
 }
-function constraintEditor(pane){const c=constraintDraft;el('h3',conditionNames[c.type],pane);const name=textInput(pane,'Name',c.name||'');name.oninput=()=>c.name=name.value;for(const side of ['parent','child']){const i=doc.instances.find(i=>i.id===c[side]);note(pane,(side==='parent'?'Fläche 1: ':'Fläche 2: ')+(i?(i.name||i.id)+' · '+(assets[i.part]?.datums[c[side+'Face']]?.label||c[side+'Face']):'noch nicht gewählt'));button(pane,side==='parent'?'Fläche 1 wählen':'Fläche 2 wählen',()=>{pick={constraint:true,side};render();status('Passende Fläche im Modell anklicken.');});}if(c.type==='offset'){const value=numberInput(pane,'Signierter Abstand entlang Normale von Fläche 1 (mm)',c.offset??'');value.oninput=()=>c.offset=Number(value.value);button(pane,'Abstandsrichtung umkehren',()=>{if(c.offset!=null)c.offset=-c.offset;render()});note(pane,'Beide Ebenen bleiben parallel. X/Y-Verschiebung in der Ebene und Drehung um ihre Normale bleiben frei.');}else if(c.type==='angle'){
+function detachParameter(c){
+    delete c.parameterId;
+    delete c.parameterSign;
+}
+function editParameter(parameter=null,bindTo=null){
+    if(busy||animation||motionBefore||dragState)return;
+    const dialog=el('dialog',undefined,document.body);
+    dialog.className='parameter-editor';
+    el('h3',parameter?'Längenparameter bearbeiten':'Längenparameter anlegen',dialog);
+    const form=el('form',undefined,dialog);
+    const name=textInput(form,'Name',parameter?.name||'');
+    name.required=true;
+    const value=numberInput(form,'Länge (mm)',parameter?.value??Math.abs(bindTo?.offset||0));
+    value.required=true;value.min=0;value.step='any';
+    const message=el('p','',form);
+    message.setAttribute('role','alert');
+    const save=button(form,'Übernehmen',null,'primary');
+    save.type='submit';
+    const close=button(form,'Abbrechen',()=>dialog.close());
+    close.type='button';
+    dialog.onclose=()=>dialog.remove();
+    dialog.oncancel=e=>{if(busy)e.preventDefault();};
+    form.onsubmit=async e=>{
+        e.preventDefault();
+        if(busy)return;
+        const d=clone(doc);
+        d.parameters??=[];
+        const next={id:parameter?.id||uid(),name:name.value.trim(),value:value.valueAsNumber};
+        if(parameter)d.parameters[d.parameters.findIndex(p=>p.id===parameter.id)]=next;
+        else d.parameters.push(next);
+        const draft=constraintDraft,selection=selectedConstraint,currentPick=pick;
+        if(!await commit(d)){
+            message.textContent=$('status').textContent;
+            return;
+        }
+        if(draft){
+            constraintDraft=draft;selectedConstraint=selection;pick=currentPick;
+            if(bindTo)bindParameter(bindTo,next);
+            else if(draft.parameterId===next.id)draft.offset=next.value*(draft.parameterSign??1);
+            render();
+        }
+        dialog.close();
+    };
+    dialog.showModal();
+    name.focus();
+}
+function bindParameter(c,p){
+    c.parameterSign=c.parameterSign??(c.offset<0?-1:1);
+    c.parameterId=p.id;
+    c.offset=c.parameterSign*p.value;
+}
+function offsetEditor(pane,c){
+    const value=numberInput(pane,'Signierter Abstand entlang Normale von Fläche 1 (mm)',c.offset??'');
+    value.readOnly=!!c.parameterId;
+    value.oninput=()=>c.offset=Number(value.value);
+    if(c.parentFace && c.childFace){
+        const params=doc.parameters||[];
+        const options=[['','Fester Wert'],...params.map(p=>['id:'+p.id,p.name+' · '+p.value+' mm']),['new','Neuer Parameter aus Abstand …']];
+        const source=selectInput(pane,'ƒx · Abstandsparameter',options,c.parameterId?'id:'+c.parameterId:'');
+        source.onchange=()=>{
+            if(source.value==='new'){
+                source.value=c.parameterId?'id:'+c.parameterId:'';
+                editParameter(null,c);
+                return;
+            }
+            if(source.value)bindParameter(c,params.find(p=>'id:'+p.id===source.value));
+            else detachParameter(c);
+            render();
+        };
+    }
+    button(pane,'Abstandsrichtung umkehren',()=>{
+        if(c.parameterId)c.parameterSign=-(c.parameterSign??1);
+        if(c.offset!=null)c.offset=-c.offset;
+        render();
+    });
+    note(pane,'Beide Ebenen bleiben parallel. X/Y-Verschiebung in der Ebene und Drehung um ihre Normale bleiben frei.');
+}
+function constraintEditor(pane){const c=constraintDraft;el('h3',conditionNames[c.type],pane);const name=textInput(pane,'Name',c.name||'');name.oninput=()=>c.name=name.value;for(const side of ['parent','child']){const i=doc.instances.find(i=>i.id===c[side]);note(pane,(side==='parent'?'Fläche 1: ':'Fläche 2: ')+(i?(i.name||i.id)+' · '+(assets[i.part]?.datums[c[side+'Face']]?.label||c[side+'Face']):'noch nicht gewählt'));button(pane,side==='parent'?'Fläche 1 wählen':'Fläche 2 wählen',()=>{pick={constraint:true,side};render();status('Passende Fläche im Modell anklicken.');});}if(c.type==='offset'){offsetEditor(pane,c);}else if(c.type==='angle'){
     const field=numberInput(pane,'Winkel zwischen Normalen oder Achsen (°)',c.angle);
     field.min=0;field.max=180;field.step='any';
     field.oninput=()=>c.angle=field.valueAsNumber;
@@ -500,21 +606,14 @@ async function cancelDrag(){const d=dragState;if(!d)return;previewToken++;previe
 
 new ResizeObserver(()=>{const r=$('stage').getBoundingClientRect();W=Math.max(1,r.width);H=Math.max(1,r.height);dpr=Math.min(devicePixelRatio||1,2);canvas.width=W*dpr;canvas.height=H*dpr;draw()}).observe($('stage'));
 function demoDocument(){const box=(id,a,b,depth)=>({version:2,features:[{id:'body',shape:'multi',op:'pad',support:{plane:'XY'},depth,geometry:[{id:'outline',type:'rect',x:0,y:0,a,b,angle:0}],dimensions:[],relations:[]}]});return {format:'MetricCAD-assembly',version:1,parts:[{id:'base',name:'Grundplatte',document:box('base',70,50,8)},{id:'arm',name:'Hebel',document:box('arm',70,12,6)},{id:'block',name:'Schieber',document:box('block',12,18,10)}],instances:[{id:'ground',part:'base',name:'Grundplatte · fixiert',fixed:true,pose:{position:[0,0,0],rotation:[0,0,0]}},{id:'lever',part:'arm',name:'Hebel',fixed:false,pose:{position:[0,0,8],rotation:[0,0,0]}},{id:'slide',part:'block',name:'Schieber',fixed:false,pose:{position:[0,0,14],rotation:[0,0,0]}}],joints:[{id:'hinge',name:'Hebel drehen',type:'revolute',parent:'ground',child:'lever',parentFrame:{origin:[-20,0,8],rotation:[0,0,0]},childFrame:{origin:[-30,0,0],rotation:[0,0,0]},value:25,limits:[-80,80]},{id:'rail',name:'Schieber bewegen',type:'slider',parent:'lever',child:'slide',parentFrame:{origin:[0,0,6],rotation:[0,90,0]},childFrame:{origin:[0,0,0],rotation:[0,90,0]},value:0,limits:[-22,22]}]}}
-$('demo').onclick=()=>{return assemblyFiles.switchTo(()=>replaceAssembly(demoDocument()),true)};
-// Dedicated editor tabs; no shared localStorage mailbox or external-file writes.
-const partEditors=new Map();
-function openPartEditor(partID){if(busy||animation||motionBefore||dragState)return;const part=doc.parts.find(p=>p.id===partID);if(!part)return;for(const [token,session] of partEditors){if(session.part===partID&&!session.window.closed){session.window.focus();status('Der Editor für dieses Teil ist bereits geöffnet.');return}if(session.window.closed)partEditors.delete(token)}const token=uid(),editor=window.open('/#assembly-edit='+encodeURIComponent(token),'_blank');if(!editor){status('Der Browser hat den Editor-Tab blockiert. Bitte Pop-ups für MetricCAD erlauben.',true);return}partEditors.set(token,{part:partID,window:editor,base:JSON.stringify(part.document)});status('Teil im Part Design geöffnet · Änderungen gelten für alle Instanzen dieser Teildefinition.');}
-function editorReply(session,token,type,data={}){session.window.postMessage({channel:'metriccad-part-edit',token,type,...data},location.origin)}
-function invalidatePartEditors(){for(const [token,session] of partEditors)if(!session.window.closed)editorReply(session,token,'invalid',{error:'In der Baugruppe wurde ein anderes Projekt geöffnet. Bitte das Teil dort erneut zum Bearbeiten öffnen.'});partEditors.clear()}
-async function receivePartEdit(e){const m=e.data;if(e.origin!==location.origin||!m||m.channel!=='metriccad-part-edit'||typeof m.token!=='string')return;const session=partEditors.get(m.token);if(!session||e.source!==session.window)return;const part=doc.parts.find(p=>p.id===session.part);if(!part){editorReply(session,m.token,'invalid',{error:'Die Teildefinition ist in dieser Baugruppe nicht mehr vorhanden.'});return}if(m.type==='ready'||m.type==='reload'){if(assemblyFiles.active||busy||animation||motionBefore||dragState){editorReply(session,m.token,'error',{error:'Baugruppe ist beschäftigt. Bitte danach erneut „Teil neu laden“ wählen.'});return}session.base=JSON.stringify(part.document);editorReply(session,m.token,'load',{document:clone(part.document),name:part.name||part.id,instances:doc.instances.filter(i=>i.part===part.id).length});return}if(m.type!=='apply')return;if(assemblyFiles.active||busy||animation||motionBefore||dragState){editorReply(session,m.token,'result',{request:m.request,ok:false,error:'Baugruppe ist beschäftigt. Bitte anschließend erneut übernehmen.'});return}if(JSON.stringify(part.document)!==session.base){editorReply(session,m.token,'result',{request:m.request,ok:false,error:'Das Teil wurde inzwischen in der Baugruppe geändert. Bitte deine Bearbeitung als JSON sichern und „Teil neu laden“ wählen, bevor du erneut übernimmst.'});return}if(!m.document||!Array.isArray(m.document.features)){editorReply(session,m.token,'result',{request:m.request,ok:false,error:'Ungültiges Teilprojekt.'});return}const candidate=clone(doc);candidate.parts.find(p=>p.id===session.part).document=clone(m.document);const ok=await commit(candidate,true);if(ok){session.base=JSON.stringify(doc.parts.find(p=>p.id===session.part).document);status('Teil aktualisiert · '+doc.instances.filter(i=>i.part===session.part).length+' Instanzen übernommen.')}editorReply(session,m.token,'result',{request:m.request,ok,error:ok?null:$('status').textContent,instances:doc.instances.filter(i=>i.part===session.part).length});}
-window.addEventListener('message',receivePartEdit);
+$('demo').onclick=()=>host.addDocument(demoDocument(),'Beispielbaugruppe');
 
 // Offer a pre-file-workflow assembly for explicit recovery.
 try {
  if(localStorage.getItem('metriccad-assembly-v1')!==null){
   const legacy=document.createElement('button');legacy.textContent='Alte Baugruppe öffnen';
   $('open').after(legacy);
-  legacy.onclick=()=>assemblyFiles.switchTo(()=>replaceAssembly(JSON.parse(localStorage.getItem('metriccad-assembly-v1'))),true);
+  legacy.onclick=()=>host.addDocument(JSON.parse(localStorage.getItem('metriccad-assembly-v1')),'Alte Baugruppe');
  }
 }catch{/* Browser storage may be disabled. */}
 render();

@@ -69,31 +69,22 @@ function resetUI(){
     $('empty').hidden=!!doc.model;tree();properties();view?.draw();
     status(doc.model?'Ziehen zum Drehen · Mitteltaste zum Verschieben · Mausrad zum Zoomen':'Bereit.');
 }
-const files=bindProjectFiles({defaultName:'Visualisierung.metriccad.json',blocked:()=>rendering,replace});
-async function chooseAssembly(){
-    if(!window.showOpenFilePicker)throw Error('Für die Dateiauswahl bitte Chrome oder Edge verwenden.');
-    const [handle]=await showOpenFilePicker({types:[{description:'MetricCAD-Baugruppe',accept:{'application/json':['.json']}}]});
-    const file=await handle.getFile();return JSON.parse(await file.text());
-}
-$('source').onclick=()=>files.switchTo(async()=>{
-    const model=await chooseAssembly(),b=await build(model),s=emptyScene();
-    s.model=model;bounds=b;
-    const c={id:crypto.randomUUID(),name:'Kamera 1',yaw:-1.04,pitch:.38};
-    fit(c);s.cameras.push(c);s.activeCamera=c.id;s.lights.push(newLight(s,b));doc=s;resetUI();return true;
-},true);
-$('refresh').onclick=async()=>{
-    document.body.inert=true;
-    try{
-        const model=await chooseAssembly();
-        if(!model.instances?.some(i=>doc.model.instances.some(old=>i.id===old.id))&&
-            !model.parts?.some(p=>doc.model.parts.some(old=>old.id===p.id)))
-            throw Error('Keine übereinstimmenden Teil- oder Instanz-IDs.');
-        bounds=await build(model);doc.model=model;
-        for(const [map,items] of [[doc.materials,model.parts],[doc.overrides,model.instances]])
+registerEditor({blocked:()=>rendering,load:replace,
+    refresh(value){
+        for(const [map,items] of [[value.materials,value.model.parts],[value.overrides,value.model.instances]])
             for(const key of Object.keys(map))if(!items.some(i=>i.id===key))delete map[key];
-        resetUI();status('Baugruppe aktualisiert.');
-    }catch(e){if(e.name!=='AbortError')status(e.message,true);}
-    finally{document.body.inert=false;}
+        return replace(value);
+    },
+    async link(model){
+        const b=await build(model),s=emptyScene();s.model=model;bounds=b;
+        const c={id:crypto.randomUUID(),name:'Kamera 1',yaw:-1.04,pitch:.38};
+        fit(c);s.cameras.push(c);s.activeCamera=c.id;s.lights.push(newLight(s,b));doc=s;resetUI();
+    }
+});
+$('source').onclick=()=>host.link('assembly');
+$('refresh').onclick=async()=>{
+    if(!doc.model||rendering)return;
+    try{await replace(doc);}catch(e){status(e.message,true);}
 };
 function element(tag,text,parent){
     const el=document.createElement(tag);if(text!==null)el.textContent=text;parent.append(el);return el;

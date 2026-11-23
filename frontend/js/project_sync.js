@@ -4,7 +4,6 @@
  */
 (() => {
   'use strict';
-  if (assemblyEditToken) return; // Assembly editor tabs use their explicit hand-off.
   let token = null, project = null, acknowledged = null;
   let applying = false, saving = null, loading = false, conflict = false, ready = false;
   let timer = null, polling = false, errorText = '';
@@ -227,26 +226,11 @@
   };
   $('undo').onclick=()=>undo();$('redo').onclick=()=>undo(true);
 
-  const files=bindProjectFiles({
-    defaultName:'MetricCAD-Teil.json',blocked:()=>!ready||loading||editing(),
-    async replace(value,name) {
-      if(value!==null && ![1,2].includes(value?.version))throw Error('Bitte eine Bauteil-JSON wählen.');
-      if(value?.format==='MetricCAD-assembly')throw Error('Baugruppen bitte in der Baugruppenansicht öffnen.');
-      const ok=await loadProject(value===null ? null : ()=>api('create_project',{name:name.replace(/\.json$/i,''),document:value,allow_partial:true}));
-      if(ok)window.history.replaceState(null,'','/');
-      return ok;
-    }
-  });
   $('sharedProjectList').onclick=()=>refreshList().catch(error=>status(error.message,true));
-  $('sharedProjectSelect').onchange=async e=>{
-    const id=e.target.value;
-    $('file-menu').hidePopover?.();
+  $('sharedProjectSelect').onchange=e=>{
+    const option=e.target.selectedOptions[0];$('file-menu').hidePopover?.();
+    if(option?.value)host.serverPart(option.value,option.textContent);
     e.target.value=project.id||'';
-    await files.switchTo(async()=>{
-      if(!await loadProject(id))return false;
-      window.history.replaceState(null,'',id?'/?project='+encodeURIComponent(id):'/');
-      return true;
-    });
   };
   $('sharedProjectReload').onclick=async()=>{
     if(editing()||saving)return;
@@ -255,15 +239,21 @@
   };
   $('sharedProjectFork').onclick=async()=>{
     if(editing()||saving)return;
-    try{await files.switchTo(()=>loadProject(()=>api('create_project',{name:(project?.name||'Projekt')+' · Entwurf',document:structuredClone(doc),allow_partial:true})));}
-    catch(error){errorText=error.message;showState();}
+    host.addDocument(structuredClone(doc),(project?.name||'Teil')+' · Entwurf');
+
   };
 
   window.metriccadSync={changed,flush,api,get project(){return project;},get conflict(){return conflict;}};
-  (async()=>{
-    busy=true;render();
-    try{await session();await loadProject(new URLSearchParams(location.search).get('project'));files.markClean();}
-    catch(error){errorText=error.message;showState();}
-    finally{busy=false;render();setInterval(poll,1000);updateMCP();setInterval(updateMCP,3000);}
-  })();
+  registerEditor({
+    blocked:()=>!ready||editing()||loading,
+    serverId:()=>unsaved()||conflict?null:project?.id,
+    async flush(){if(!conflict)await flush();},
+    async load(value,name,serverId){
+      await session();
+      const ok=await loadProject(serverId|| (value?()=>api('create_project',{name,document:value,allow_partial:true}):null));
+      setInterval(()=>{if(!frameElement?.hidden)poll();},1000);
+      updateMCP();setInterval(()=>{if(!frameElement?.hidden)updateMCP();},3000);
+      return ok;
+    }
+  });
 })();

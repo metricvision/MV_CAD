@@ -43,6 +43,10 @@ python3.12 -m venv .venv
 
 The browser opens at **http://127.0.0.1:8765**. Keep the terminal running while using the application. Stop the server with **Ctrl+C**.
 
+Use **Projekt** in the top bar to create or select parts, assemblies, drawings and visualization scenes. The workspace menu returns to the last object in each workspace. Insert parts and choose drawing or scene sources directly from the project.
+
+**Speichern** writes the entire project to one JSON file. To bring older standalone files into an existing project, use **Datei → In Projekt importieren**. To share one object with its dependencies, use **Aktuelles Objekt exportieren**.
+
 ## Let AI Do the Work
 
 1. Start `app.py` and click **MCP starten** in the Part Studio project bar.
@@ -68,7 +72,6 @@ MetricCAD is an **early version for testing and feedback**.
 
 - Models are limited to 50 features; additional sketch and geometry limits apply.
 - Fillets and helix sweeps have geometry-dependent limitations.
-- Drawing sheets with arranged views and title blocks are not included.
 - The intended setup is a local, single-user application. Public hosting and multi-user operation are not supported deployment targets for this release.
 - Full browser/WebGL integration testing remains unverified.
 
