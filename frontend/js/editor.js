@@ -7,14 +7,24 @@ function menuButton(container,text,action){
 }
 const workspaceMenu=document.getElementById('workspace-menu');
 for(const [kind,name] of Object.entries(workspaceNames))menuButton(workspaceMenu,name,()=>host.workspace(kind));
-const overview=menuButton(document.querySelector('.cad-header'),'Projekt',()=>host.tree());
+const overview=menuButton(document.querySelector('.cad-header'),'Projektbaum',()=>host.tree());
 document.querySelector('.workspace-switch').after(overview);
 for(const id of ['save','open','new','saveAs'])document.getElementById(id).onclick=()=>host.file(id);
 const fileMenu=document.getElementById('file-menu');
 menuButton(fileMenu,'In Projekt importieren …',()=>host.importFile());
 menuButton(fileMenu,'Aktuelles Objekt exportieren …',()=>host.exportFile());
 function registerEditor(options){
-  window.projectEditor={snapshot:()=>doc,...options};
+  const save=document.getElementById('save');
+  window.projectEditor={snapshot:()=>doc,...options,setDirty(dirty){
+    save.toggleAttribute('data-unsaved',dirty);
+    save.title=dirty?'Projekt speichern · Ungespeicherte Änderungen':'Projekt speichern';
+    save.setAttribute('aria-label',save.title);
+  }};
+  // The tree is rebuilt after asynchronous model changes, including external part edits.
+  const changed=()=>{if(frameElement && !frameElement.hidden)host.editorChanged();};
+  new MutationObserver(changed).observe(document.getElementById('tree'),{childList:true,subtree:true});
+  for(const event of ['input','change','click','pointerup','wheel','keyup'])
+    document.addEventListener(event,changed,{capture:true,passive:true});
 }
 // Keep the command menus aligned even when the compact header scrolls.
 for(const trigger of document.querySelectorAll('.cad-header [popovertarget]')){

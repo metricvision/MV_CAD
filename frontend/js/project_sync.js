@@ -67,7 +67,8 @@
     badge.className = conflict || errorText ? 'sync-error' : '';
     badge.textContent = conflict ? 'Gleichzeitige Änderung erkannt · dein Entwurf bleibt erhalten' :
       errorText || (!ready || loading ? 'Projekt wird geladen …' : saving ? 'Arbeitsstand wird synchronisiert …' :
-        unsaved() ? 'Lokaler Entwurf · noch nicht übernommen' : !project.id ? 'Neues Teil' : 'Synchron · Stand ' + project.revision + (project.pending_sketch ? ' · Skizzenbearbeitung' : ''));
+        unsaved() ? 'Lokaler Entwurf · noch nicht übernommen' : !project.id ? 'Neues Teil' : 'Synchron');
+    badge.title=badge.textContent==='Synchron'?'Stand '+project.revision+(project.pending_sketch?' · Skizzenbearbeitung':''):'';
     for (const id of ['sharedProjectReload', 'sharedProjectFork']) $(id).hidden = !conflict && !errorText;
     $('sharedProjectSelect').disabled = !ready || loading || !!saving || busy || geometrySaving;
   }

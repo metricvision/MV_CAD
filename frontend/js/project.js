@@ -11,6 +11,25 @@ function status(message,error=false){
 function entry(){return model.get(doc,active);}
 function current(){return frames.get(active);}
 function dirty(){const f=current();return !!f && JSON.stringify(f.editor.snapshot())!==f.snapshot;}
+function refreshIndicator(){
+  const f=current();
+  if(!f)return;
+  let changed=files.modified();
+  if(dirty()){
+    if(changed){
+      // Undo can bring the active editor back to disk state after switching workspaces.
+      const item={...entry()},candidate={...doc,items:doc.items.map(i=>i.id===active?item:i)};
+      model.store(candidate,item,f.editor.snapshot());
+      changed=files.modified(candidate);
+    }else changed=true;
+  }
+  f.editor.setDirty?.(changed);
+}
+let indicatorTimer=null;
+function editorChanged(){
+  if(indicatorTimer!==null)return;
+  indicatorTimer=setTimeout(()=>{indicatorTimer=null;refreshIndicator();},150);
+}
 async function capture(){
   const f=current();
   if(!f)return;
@@ -28,7 +47,7 @@ async function run(action){
   working=true;document.body.inert=true;
   try{await capture();await action();}
   catch(e){if(e.name!=='AbortError')status(e.message,true);}
-  finally{document.body.inert=false;working=false;}
+  finally{document.body.inert=false;working=false;refreshIndicator();}
 }
 async function openItem(item,serverId=null){
   const value=model.expand(doc,item),input=JSON.stringify(value);
@@ -195,8 +214,9 @@ async function importDocument(value,name){
   model.validate(staging);doc.items.push(...staging.items);
   try{await openItem(item);}catch(e){doc.items.splice(-staging.items.length);throw e;}
 }
-const files=bindProjectFiles({defaultName:'Projekt.metriccad.json',prepare:capture,documentToSave:()=>({...doc,lastActive:active}),editorDirty:dirty,replace});
+const files=bindProjectFiles({defaultName:'Projekt.metriccad.json',prepare:capture,documentToSave:()=>({...doc,lastActive:active}),editorDirty:dirty,refreshIndicator,replace});
 window.metricProject={
+  editorChanged,
   workspace:kind=>run(async()=>{
     const item=doc.items.find(i=>i.id===recent.get(kind))||doc.items.find(i=>i.kind===kind);
     if(item)await openItem(item);else askName(kind);

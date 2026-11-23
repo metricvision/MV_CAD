@@ -20,3 +20,5 @@
     scrollbar-color: #60798c #14202d;
   }
 }
+
+.cad-header #save[data-unsaved]::after{content:"";display:inline-block;width:6px;height:6px;margin-left:6px;vertical-align:middle;border-radius:50%;background:#65d6c6}

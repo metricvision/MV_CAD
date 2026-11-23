@@ -1,8 +1,8 @@
 // One file handle and one saved snapshot per project.
-function bindProjectFiles({defaultName, prepare, documentToSave, editorDirty, replace}) {
+function bindProjectFiles({defaultName, prepare, documentToSave, editorDirty, refreshIndicator, replace}) {
   let handle=null, stamp=null, saved=JSON.stringify(doc), active=false;
   const types=[{description:'MetricCAD JSON',accept:{'application/json':['.json']}}];
-  const modified=()=>JSON.stringify(doc)!==saved;
+  const modified=(candidate=doc)=>JSON.stringify(candidate)!==saved;
   const fingerprint=file=>file.lastModified+'-'+file.size;
 
   async function run(action) {
@@ -10,7 +10,7 @@ function bindProjectFiles({defaultName, prepare, documentToSave, editorDirty, re
     active=true;document.body.inert=true;
     try{return await action();}
     catch(error){if(error.name!=='AbortError')status(error.message,true);return false;}
-    finally{document.body.inert=false;active=false;}
+    finally{document.body.inert=false;active=false;refreshIndicator();}
   }
 
   function chooseChanges() {
@@ -75,11 +75,12 @@ function bindProjectFiles({defaultName, prepare, documentToSave, editorDirty, re
     }
   },true);
   return {
+    modified,
     get active(){return active;},
     new:()=>run(()=>change(()=>replace(null))),
     open:()=>run(open),
     save:()=>run(()=>save()),
     saveAs:()=>run(()=>save(true)),
-    markClean(){saved=JSON.stringify(doc);}
+    markClean(){saved=JSON.stringify(doc);refreshIndicator();}
   };
 }

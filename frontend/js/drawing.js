@@ -398,7 +398,7 @@ function render(){
     for(const id of ['print','pdf','pageSettings',...tools,...Object.keys(viewNames)])$(id).disabled=!ready;
     for(const id of tools)$(id).setAttribute('aria-pressed',String(ready&&tool===id));
     for(const id of Object.keys(viewNames))$(id).setAttribute('aria-pressed',String(ready&&s.views.includes(id)));
-    $('update').disabled=!doc.model||loading;$('save').disabled=!doc.model;
+    $('update').disabled=!doc.model||loading;
     $('undo').disabled=!undoStack.length||loading;$('redo').disabled=!redoStack.length||loading;
     if(!geometry){area.textContent=loading?'Ansicht wird berechnet …':modelMode&&meshes?'3D-Vorschau nicht verfügbar. Ein Blatt mit Standardansicht kann erstellt werden.':doc.model?'Keine Ansicht verfügbar.':'Teil oder Baugruppe für die Werkstattzeichnung wählen.';return;}
     const spec=s;
