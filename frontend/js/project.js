@@ -149,8 +149,13 @@ function askName(kind){
   $('entries').hidden=$('treeActions').hidden=true;
   $('nameForm').hidden=false;$('nameLabel').textContent=model.labels[kind]+' benennen';
   const input=$('objectName');
-  input.value='';$('confirmName').disabled=true;input.focus();
+  const prefix=kind==='part'?'Part':model.labels[kind];
+  const used=new Set(doc.items.filter(item=>item.kind===kind).map(item=>item.name.trim().toLowerCase()));
+  let n=1;
+  while(used.has((prefix+'_'+n).toLowerCase()))n++;
+  input.value=prefix+'_'+n;
   input.oninput=()=>{$('confirmName').disabled=!input.value.trim();input.setCustomValidity('');};
+  input.oninput();input.focus();input.select();
   $('nameForm').onsubmit=e=>{
     e.preventDefault();
     const name=input.value.trim();

@@ -11,7 +11,7 @@ const empty={
 };
 let pick,openFile,disk='',writes=0,savePicks=0;
 function element(){
-  return {style:{},children:[],append(...e){this.children.push(...e);},replaceChildren(){this.children=[];},setCustomValidity(){},focus(){},remove(){},setAttribute(){},
+  return {style:{},children:[],append(...e){this.children.push(...e);},replaceChildren(){this.children=[];},setCustomValidity(){},select(){this.selected=true;},focus(){},remove(){},setAttribute(){},
     click(){return this.onclick();},showModal(){this.open=true;
       const choice=this.children.find(e=>e.textContent===pick);if(choice)choice.click();
     },close(){this.open=false;this.onclose?.();}};
@@ -53,13 +53,20 @@ const workspace=kind=>ctx.metricProject.workspace(kind);
     await nodes.get('nameForm').onsubmit({preventDefault(){}});
   };
   nodes.get('entries').children[0].children[0].children[1].click();
+  assert.equal(nodes.get('objectName').value,'Part_1');
+  assert.equal(nodes.get('objectName').selected,true);
+  assert.equal(nodes.get('confirmName').disabled,false);
   await nameObject('   ');assert.equal(nodes.get('confirmName').disabled,true);
   nodes.get('cancelName').click();assert.equal(evaluate('doc.items.length'),0);
   nodes.get('entries').children[0].children[0].children[1].click();
-  await nameObject('Teil');
+  await nodes.get('nameForm').onsubmit({preventDefault(){}});
+  assert.equal(evaluate('entry().name'),'Part_1');
+  await ctx.metricProject.tree();nodes.get('entries').children[0].children[0].children[1].click();
+  assert.equal(nodes.get('objectName').value,'Part_2');
+  nodes.get('cancelName').click();nodes.get('tree').close();
   const initial=evaluate('entry().id');
-  Object.assign(evaluate('current().editor.snapshot()'),structuredClone(plate));pick='Teil';
-  await workspace('assembly');await nameObject('Baugruppe');await ctx.metricProject.insert();
+  Object.assign(evaluate('current().editor.snapshot()'),structuredClone(plate));pick='Part_1';
+  await workspace('assembly');assert.equal(nodes.get('objectName').value,'Baugruppe_1');await nameObject('Baugruppe');await ctx.metricProject.insert();
   const assembly=evaluate('entry().id'),assemblyFrame=evaluate('current().frame');
   await ctx.metricProject.editPart('board');assert.equal(evaluate('active'),initial);
   evaluate('current().editor.snapshot().features[0].depth=17');
