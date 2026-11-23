@@ -755,7 +755,31 @@ function curvePoint(g,t){if(g.type==='spline'){let ps=g.points.map(p=>[p.x,p.y])
 function curveSegments(g,count=96){return Array.from({length:count},(_,i)=>[curvePoint(g,i/count),curvePoint(g,(i+1)/count)]);}
 function curvePrimitives(f){const out=[];for(const g of f.geometry||[]){if(['circle','arc','ellipse','spline'].includes(g.type))out.push({g,source:g.id});else for(const [role,points] of Object.entries(mSegments(g)))out.push({g:{type:'line',points},source:g.id,role});}return out;}
 function nearestCurve(screen){let best=null;for(const c of curvePrimitives(activeSketch()||{})){const ss=curveSegments(c.g,c.g.type==='line'?1:96);for(let i=0;i<ss.length;i++){const a=xy(...ss[i][0]),b=xy(...ss[i][1]),v=sub2(b,a),l=v[0]**2+v[1]**2,t=Math.max(0,Math.min(1,l?((screen[0]-a[0])*v[0]+(screen[1]-a[1])*v[1])/l:0)),d=Math.hypot(screen[0]-a[0]-t*v[0],screen[1]-a[1]-t*v[1]);if(!best||d<best.d)best={...c,t:(i+t)/ss.length,d};}}return best?.d<10?best:null;}
+// A tangent has no crossing between sampled chords. Intersect the actual circle.
+function circularLineCuts(circle,line,circularTarget){
+ const [[x,y],end]=line.points,[dx,dy]=sub2(end,[x,y]),length=Math.hypot(dx,dy);
+ if(!length)return [];
+ const ux=dx/length,uy=dy/length,cx=circle.x-x,cy=circle.y-y;
+ const along=cx*ux+cy*uy,distance=Math.abs(cx*uy-cy*ux),radius=circle.a/2;
+ if(distance>radius+1e-7)return [];
+ const half=Math.abs(radius-distance)<=1e-7?0:Math.sqrt((radius-distance)*(radius+distance));
+ const cuts=[];
+ for(const offset of half?[along-half,along+half]:[along]){
+  const t=offset/length;
+  if(t< -1e-8||t>1+1e-8)continue;
+  const angle=Math.atan2(offset*uy-cy,offset*ux-cx),u=circularParameter(circle,angle);
+  if(u<=1+1e-8)cuts.push(Math.max(0,Math.min(1,circularTarget?u:t)));
+ }
+ return cuts;
+}
+function circularParameter(g,angle){
+ const tau=2*Math.PI,sweep=g.sweep||tau,delta=(angle-(g.start||0))*Math.sign(sweep);
+ const wrapped=((delta%tau)+tau)%tau;
+ return (tau-wrapped<1e-8?0:wrapped)/Math.abs(sweep);
+}
 function curveIntersections(a,b){
+ if(b.type==='line'&&['circle','arc'].includes(a.type))return circularLineCuts(a,b,true);
+ if(a.type==='line'&&['circle','arc'].includes(b.type))return circularLineCuts(b,a,false);
  const na=a.type==='line'?1:96,nb=b.type==='line'?1:96,A=curveSegments(a,na),B=curveSegments(b,nb),out=[],cross=(u,v)=>u[0]*v[1]-u[1]*v[0];
  for(let i=0;i<na;i++)for(let j=0;j<nb;j++){
   const p=A[i][0],q=B[j][0],u=sub2(A[i][1],p),v=sub2(B[j][1],q),det=cross(u,v);if(Math.abs(det)<1e-12)continue;
@@ -773,9 +797,6 @@ function curveSlice(g,lo,hi,id=uid()){
 }
 function trimPieces(hit,f){
  const original=f.geometry.find(g=>g.id===hit.source);if(!original)throw Error('Element fehlt.');
- // Never silently remove dimensions or constraint references while changing topology.
- const references=x=>x&&typeof x==='object'&&(x.element===original.id||Object.values(x).some(references));
- if((f.dimensions||[]).some(references)||(f.relations||[]).some(references))throw Error('Dieses Element ist bemaßt oder gebunden. Zugehörige Maße/Bedingungen vor dem Trimmen lösen.');
  let cuts=[];for(const other of curvePrimitives(f)){if(other.source===hit.source&&other.role===hit.role)continue;cuts.push(...curveIntersections(hit.g,other.g));}
  cuts=cuts.sort((a,b)=>a-b).filter((x,i,a)=>!i||x-a[i-1]>1e-7);
  const closed=curveClosed(hit.g);let spans=[];
@@ -785,9 +806,82 @@ function trimPieces(hit,f){
  if(['polyline','rect'].includes(original.type)){for(const [role,ps] of Object.entries(mSegments(original)))if(role!==hit.role)pieces.push(curveSlice({type:'line',points:ps},0,1));}
  pieces.forEach((g,i)=>{g.construction=!!original.construction;if(i===0)g.id=original.id;});return pieces;
 }
-async function trimAt(hit){if(!hit)return;try{const pieces=trimPieces(hit,activeSketch());if(await commitRelations(f=>{const i=f.geometry.findIndex(g=>g.id===hit.source);f.geometry.splice(i,1,...pieces);})){trimHover=null;render();status('Abschnitt entfernt · Weitere Abschnitte anklicken · Strg+Z macht rückgängig.');}}catch(e){status(e.message,true);}}
+function keepTrimBinding(item,original,pieces){
+ const refs=['first','second','center','axis'].map(key=>item[key]).filter(ref=>ref?.element===original.id);
+ if(!refs.length&&item.element!==original.id)return true;
+ const arc=pieces.length===1&&pieces[0].type==='arc'?pieces[0]:null;
+ if(!arc){
+  if(item.element===original.id)return false;
+  const near=(a,b)=>Math.hypot(...sub2(a,b))<1e-7;
+  return refs.every(ref=>{
+   const matches=[];
+   if(ref.kind==='point'){
+    const before=mPoints(original)[ref.role];
+    for(const piece of pieces)for(const [role,p] of Object.entries(mPoints(piece)))
+     if(before&&near(before,p))matches.push({element:piece.id,role});
+   }else if(ref.kind==='edge'){
+    const before=mSegments(original)[ref.role];
+    if(!before)return false;
+    const directional=['horizontal','vertical','perpendicular','angle'].includes(item.kind);
+    const [dx,dy]=sub2(before[1],before[0]),length=Math.hypot(dx,dy);
+    const onSegment=p=>{
+     const [x,y]=sub2(p,before[0]),along=(x*dx+y*dy)/length;
+     return Math.abs(x*dy-y*dx)<1e-7*length&&along>=-1e-7&&along<=length+1e-7;
+    };
+    for(const piece of pieces)for(const [role,[a,b]] of Object.entries(mSegments(piece)))
+     if(near(before[0],a)&&near(before[1],b)||directional&&onSegment(a)&&onSegment(b)&&
+        (b[0]-a[0])*dx+(b[1]-a[1])*dy>0)matches.push({element:piece.id,role});
+   }
+   if(matches.length!==1)return false;
+   Object.assign(ref,matches[0]);
+   return true;
+  });
+ }
+ if(item.element===original.id){
+  if(item.kind==='diameter'){item.kind='radius';item.value/=2;}
+  return item.kind==='radius';
+ }
+ return refs.every(ref=>{
+  if(ref.kind==='point'){
+   if(ref.role==='center')return true;
+   const old=mPoints(original)[ref.role],point=mPoints(arc)[ref.role];
+   return old&&point&&Math.hypot(...sub2(point,old))<1e-7;
+  }
+  if(ref.kind!=='circle')return false;
+  if(item.kind!=='tangent')return true;
+  const other=item.first===ref?item.second:item.first;
+  const target=geometryTargets().find(t=>SAME(t.ref,other));
+  if(!target)return false;
+  let direction;
+  if(target.center)direction=sub2(target.center,[arc.x,arc.y]);
+  else if(target.points){
+   const [a,b]=refLine(other),[dx,dy]=sub2(b,a);
+   const side=(arc.x-a[0])*dy-(arc.y-a[1])*dx;
+   direction=[-dy*Math.sign(side),dx*Math.sign(side)];
+  }else return false;
+  return circularParameter(arc,Math.atan2(direction[1],direction[0]))<=1+1e-7;
+ });
+}
+async function trimAt(hit){
+ if(!hit)return;
+ const ok=await commitRelations(f=>{
+  const index=f.geometry.findIndex(g=>g.id===hit.source),original=f.geometry[index];
+  const pieces=trimPieces(hit,f),lost=[];
+  for(const key of ['dimensions','relations']){
+   f[key]=(f[key]||[]).filter(item=>{
+    if(keepTrimBinding(item,original,pieces))return true;
+    lost.push(key==='dimensions'?'Maß ('+item.value+')':relationNames[item.kind]);
+    return false;
+   });
+  }
+  if(lost.length&&!window.confirm('Beim Trimmen folgende Bindungen lösen?\n'+lost.join(', ')))
+   throw Error('Trimmen abgebrochen.');
+  f.geometry.splice(index,1,...pieces);
+ });
+ if(ok){trimHover=null;render();status('Abschnitt entfernt · Weitere Abschnitte anklicken · Strg+Z macht rückgängig.');}
+}
 function ellipseDraft(points){const [c,a,b]=points,u=sub2(a,c),r=Math.hypot(...u);if(r<1e-4)throw Error('Erste Halbachse ist zu kurz.');const v=sub2(b,c),rb=Math.abs((u[0]*v[1]-u[1]*v[0])/r);if(rb<1e-4)throw Error('Zweite Halbachse ist zu kurz.');return{id:uid(),type:'ellipse',x:c[0],y:c[1],a:2*r,b:2*rb,angle:Math.atan2(u[1],u[0]),start:0,sweep:2*Math.PI};}
-for(const kind of curveTools)$(kind).onclick=async()=>{await selectDrawingTool(kind);status(kind==='circle'?'Kreis: Mittelpunkt anklicken, Radius aufziehen und erneut klicken.':kind==='ellipse'?'Ellipse: Mittelpunkt → erste Halbachse → zweite Halbachse.':kind==='spline'?'Spline: Startpunkt → erster Kontrollpunkt → zweiter Kontrollpunkt → Endpunkt.':'Trimmen: Abschnitt zwischen schneidenden Kurven anklicken. Gebundene Elemente zuerst lösen.');};
+for(const kind of curveTools)$(kind).onclick=async()=>{await selectDrawingTool(kind);status(kind==='circle'?'Kreis: Mittelpunkt anklicken, Radius aufziehen und erneut klicken.':kind==='ellipse'?'Ellipse: Mittelpunkt → erste Halbachse → zweite Halbachse.':kind==='spline'?'Spline: Startpunkt → erster Kontrollpunkt → zweiter Kontrollpunkt → Endpunkt.':'Trimmen: Abschnitt zwischen schneidenden Kurven anklicken.');};
 const curveDown=overlay.onpointerdown;overlay.onpointerdown=async e=>{if(busy||geometrySaving)return;if(mode==='2d'&&e.button===0&&!e.shiftKey&&curveTools.includes(tool)){e.preventDefault();if(tool==='trim'){await trimAt(nearestCurve(point(e)));return;}const q=snapPoint(point(e));
  if(tool==='circle'){
   if(!curveDraft.length){curveDraft.push(q);curveCursor=q.p;draw();return;}
@@ -814,7 +908,7 @@ const curveHitGeometry=hitGeometry;hitGeometry=function(p){const ref=curveHitGeo
 const curveTargets=geometryTargets;geometryTargets=function(){const out=curveTargets();for(const g of activeSketch()?.geometry||[])if(['ellipse','spline'].includes(g.type))out.push({ref:{kind:'curve',element:g.id},pickSegments:curveSegments(g)});return out;};
 const curveHighlight=highlightRelationRef;highlightRelationRef=function(ref,f,color='#ffce78'){const g=f.geometry?.find(g=>g.id===ref.element);if(g&&['ellipse','spline'].includes(g.type)&&['curve','geometry'].includes(ref.kind)){for(const [a,b] of curveSegments(g))line(xy(...a),xy(...b),color,3);return;}return curveHighlight(ref,f,color);};
 
-const curveMainDraw=draw;draw=function(){curveMainDraw();if(mode==='2d'&&curveTools.includes(tool))$('help').textContent=tool==='circle'?(curveDraft.length?'Radius aufziehen und zum Abschließen klicken · Esc: abbrechen':'Mittelpunkt anklicken · Esc: abbrechen'):tool==='ellipse'?'Mittelpunkt → erste Halbachse → zweite Halbachse · Esc: abbrechen':tool==='spline'?'Start → Kontrollpunkt 1 → Kontrollpunkt 2 → Ende · Kontrollpunkte später ziehen · Esc: abbrechen':'Abschnitt zwischen Schnittpunkten anklicken · Gebundene Elemente zuerst lösen · Strg+Z: rückgängig';};
+const curveMainDraw=draw;draw=function(){curveMainDraw();if(mode==='2d'&&curveTools.includes(tool))$('help').textContent=tool==='circle'?(curveDraft.length?'Radius aufziehen und zum Abschließen klicken · Esc: abbrechen':'Mittelpunkt anklicken · Esc: abbrechen'):tool==='ellipse'?'Mittelpunkt → erste Halbachse → zweite Halbachse · Esc: abbrechen':tool==='spline'?'Start → Kontrollpunkt 1 → Kontrollpunkt 2 → Ende · Kontrollpunkte später ziehen · Esc: abbrechen':'Abschnitt zwischen Schnittpunkten anklicken · Strg+Z: rückgängig';};
 
 // Helices are independent reference features; profiles keep their helix by ID.
 let helixDraft=null,sweepDraft=null;
