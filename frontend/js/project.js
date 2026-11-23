@@ -67,24 +67,59 @@ async function create(kind,name,serverId=null){
 function button(container,label,click){
   const b=document.createElement('button');b.textContent=label;b.onclick=click;container.append(b);return b;
 }
+function treeLabel(row,kind,name){
+  const ns='http://www.w3.org/2000/svg';
+  const icon=document.createElementNS(ns,'svg'),use=document.createElementNS(ns,'use');
+  icon.setAttribute('class','icon');icon.setAttribute('aria-hidden','true');
+  use.setAttribute('href','#icon-'+kind);icon.append(use);
+  const label=document.createElement('span');label.textContent=name;
+  row.append(icon,label);
+}
+function toggleBranch(toggle,branch){
+  toggle.setAttribute('aria-expanded','true');
+  toggle.onclick=()=>{
+    branch.hidden=!branch.hidden;
+    toggle.setAttribute('aria-expanded',String(!branch.hidden));
+  };
+}
 function tree(){
   const list=$('entries');list.replaceChildren();
-  for(const [kind,title] of Object.entries(model.labels)){
-    const group=document.createElement('section');list.append(group);
-    const heading=document.createElement('strong');heading.textContent=title;group.append(heading);
-    button(group,'＋',()=>{
-      const name=prompt(title+' anlegen',title+' '+(doc.items.filter(i=>i.kind===kind).length+1));
+  const titles={part:'Teile',assembly:'Baugruppen',drawing:'Zeichnungen',visualizer:'Visualisierungen'};
+  function append(parent,tag){
+    const el=document.createElement(tag);parent.append(el);return el;
+  }
+  function node(row,kind,name,open){
+    const btn=button(row,'',()=>{$('tree').close();run(open);});
+    btn.className='node';btn.title=name;treeLabel(btn,kind,name);
+    return btn;
+  }
+  for(const [kind,title] of Object.entries(titles)){
+    const items=doc.items.filter(i=>i.kind===kind);
+    const group=append(list,'section'),head=append(group,'header');
+    const heading=items.length?button(head,'',null):append(head,'span');
+    heading.className='group-title'+(items.length?'':' empty');treeLabel(heading,kind,title);
+    const add=button(head,'+',()=>{
+      const name=prompt(model.labels[kind]+' anlegen',model.labels[kind]+' '+(items.length+1));
       if(name?.trim()){$('tree').close();run(()=>create(kind,name.trim()));}
-    }).title=title+' anlegen';
-    for(const i of doc.items.filter(i=>i.kind===kind)){
-      const b=button(group,i.name,()=>{$('tree').close();run(()=>openItem(i));});
-      b.className='entry';b.setAttribute('aria-current',String(i.id===active));
-      for(const sheet of i.data?.sheets||[]){
-        const row=button(group,'↳ '+(sheet.title||'Blatt '+(i.data.sheets.indexOf(sheet)+1)),()=>{
-          $('tree').close();run(async()=>{await openItem(i);await current().editor.sheet(sheet);});
+    });
+    add.className='add';add.title=model.labels[kind]+' anlegen';add.setAttribute('aria-label',add.title);
+    if(!items.length)continue;
+    const branch=append(group,'ul');toggleBranch(heading,branch);
+    for(const item of items){
+      const leaf=append(branch,'li'),row=append(leaf,'div');row.className='tree-row';
+      const sheets=item.data?.sheets||[];
+      const toggle=sheets.length?button(row,'',null):null;
+      const btn=node(row,kind,item.name,()=>openItem(item));
+      if(item.id===active)btn.setAttribute('aria-current','true');
+      if(!toggle)continue;
+      toggle.className='twist';toggle.setAttribute('aria-label',item.name+' · Zeichenblätter');
+      const children=append(leaf,'ul');toggleBranch(toggle,children);
+      sheets.forEach((sheet,index)=>{
+        const child=append(children,'li'),line=append(child,'div');line.className='tree-row';
+        node(line,'drawing',sheet.title||'Blatt '+(index+1),async()=>{
+          await openItem(item);await current().editor.sheet(sheet);
         });
-        row.className='entry';
-      }
+      });
     }
   }
   $('tree').showModal();

@@ -4,10 +4,39 @@
 :root{color-scheme:dark;font:14px system-ui;background:#0b151e;color:#dbe7ef}body{margin:0}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 dialog{background:#172535;color:inherit;border:1px solid #3a5065;border-radius:6px;padding:16px;min-width:260px;max-height:82vh}
-dialog::backdrop{background:#06101b88}dialog h2{margin:0 0 12px;font-size:17px}dialog section{margin:.6em 0}
+dialog::backdrop{background:#06101b88}dialog h2{margin:0 0 12px;font-size:17px}
 button{background:#22364a;color:inherit;border:1px solid #41576a;border-radius:4px;padding:5px 9px;cursor:pointer;margin:2px}
-dialog .entry{display:block;width:100%;text-align:left}button[aria-current=true]{border-color:#53c4b7}
+dialog .entry{display:block;width:100%;text-align:left}
+#tree{box-sizing:border-box;width:min(390px,94vw);min-width:0;padding:18px;background:#132232}
+#tree section{padding:8px 0}#tree section+section{border-top:1px solid #40576a}
+#tree header,#tree .tree-row{display:flex;align-items:center;min-height:30px}
+#tree .group-title,#tree .node,#tree .twist{display:flex;align-items:center;gap:8px;border:0;background:transparent;color:inherit;margin:0;font:inherit}
+#tree .group-title{font-weight:650;padding:4px 0;flex:1;text-align:left}
+#tree .group-title.empty{padding-left:22px;color:#91a4b5}
+#tree .add{margin-left:auto;width:26px;height:26px;padding:0;font-size:17px}
+#tree .icon{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+#tree .group-title[aria-expanded]::before,#tree .twist::before{content:"";width:7px;height:7px;flex:none;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:rotate(-45deg);margin:0 3px}
+#tree .group-title[aria-expanded=true]::before,#tree .twist[aria-expanded=true]::before{transform:rotate(45deg)}
+#tree ul{list-style:none;margin:0 0 0 7px;padding:0}
+#tree li{position:relative;padding-left:18px}
+#tree li::before,#tree li::after{position:absolute;left:0;content:"";pointer-events:none}
+#tree li::before{top:0;bottom:0;border-left:1px solid #688496}
+#tree li:last-child::before{bottom:auto;height:15px}
+#tree li::after{top:15px;width:16px;border-top:1px solid #688496}
+#tree .node{padding:4px 6px;flex:1;min-width:0;text-align:left}
+#tree .node span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tree .twist{padding:4px 1px}
+#tree button.node:hover,#tree button.group-title:hover,#tree .twist:hover{background:#22364a}
+#tree .node[aria-current=true]{background:#20444a;box-shadow:inset 0 0 0 1px #397472}
+#tree form{margin-top:14px}
 #status{position:fixed;bottom:24px;left:12px;background:#213449;padding:8px;border-radius:4px;z-index:4}#status:empty{display:none}
 </style><body>
-<dialog id="tree"><h2>Projektübersicht</h2><div id="entries"></div><form method="dialog"><button>Schließen</button></form></dialog>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<symbol id="icon-part" viewBox="0 0 24 24"><path d="m2 6 10-4 10 4-10 5z M2 6v12l10 4 10-4V6 M12 11v11"/></symbol>
+<symbol id="icon-assembly" viewBox="0 0 24 24"><path d="m7 4 5-3 5 3-5 3z M7 4v6l5 3 5-3V4 M12 7v6 M2 13l5-3 5 3-5 3z M2 13v6l5 3 5-3v-6 M7 16v6 M12 13l5-3 5 3-5 3z M22 13v6l-5 3-5-3 M17 16v6"/></symbol>
+<symbol id="icon-drawing" viewBox="0 0 24 24"><path d="M5 2h9l5 5v15H5z M14 2v6h5"/></symbol>
+<symbol id="icon-visualizer" viewBox="0 0 24 24"><path d="M2 7h5l2-3h6l2 3h5v14H2z"/><circle cx="12" cy="13" r="4"/></symbol>
+</defs></svg>
+<dialog id="tree" aria-labelledby="tree-title"><h2 id="tree-title">Projektübersicht</h2><div id="entries"></div><form method="dialog"><button>Schließen</button></form></dialog>
 <div id="status" role="status"></div><script src="/project_model.js"></script><script src="/project_files.js"></script><script src="/project.js"></script></body></html>
